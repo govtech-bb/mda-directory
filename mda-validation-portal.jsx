@@ -628,6 +628,16 @@ export default function App() {
   return (
     <div className="root">
       <style>{CSS}</style>
+      <div className="gov-banner">
+        <div className="gov-banner-inner">
+          <span className="gov-banner-crest" aria-hidden>
+            <svg viewBox="0 0 24 24" width="15" height="15">
+              <path d="M12 3v18M6 21V11l6-4 6 4v10M8 21v-5h8v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+            </svg>
+          </span>
+          <span>Official website of the Government of Barbados</span>
+        </div>
+      </div>
       <header className="hdr">
         <div className="hdr-inner">
           <div className="crest" aria-hidden>
@@ -1045,6 +1055,9 @@ const CSS = `
 .root * { box-sizing:border-box; }
 h1,h2,h3 { font-family:'Figtree',system-ui,sans-serif; font-weight:700; letter-spacing:-0.01em; margin:0; }
 h3 { display:flex; align-items:center; gap:8px; }
+.gov-banner { background:var(--govbb-blue-00); color:#fff; }
+.gov-banner-inner { max-width:940px; margin:0 auto; padding:7px 24px; display:flex; align-items:center; gap:8px; font-size:12.5px; letter-spacing:.01em; }
+.gov-banner-crest { display:inline-flex; color:var(--gold); flex:0 0 auto; }
 .hdr { background:linear-gradient(160deg,var(--navy) 0%,var(--navy-deep) 100%); color:#fff; border-bottom:3px solid var(--gold); }
 .hdr-inner { display:flex; gap:18px; align-items:center; max-width:940px; margin:0 auto; padding:26px 24px 18px; }
 .hdr-text h1 { font-size:clamp(20px,3.4vw,28px); line-height:1.15; color:#fff; }
@@ -1076,10 +1089,10 @@ h3 { display:flex; align-items:center; gap:8px; }
 .vrow-name { font-weight:500; font-size:14.5px; }
 .kindtag { font-size:11.5px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
 .needstag { font-size:11px; color:var(--pending); font-weight:600; }
-.vrow-go { color:var(--navy); flex:0 0 auto; }
+.vrow-go { color:var(--govbb-teal-00); flex:0 0 auto; }
 .badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:20px; width:fit-content; white-space:nowrap; }
 .badge-pending { background:var(--pending-bg); color:var(--pending); } .badge-confirmed { background:var(--confirmed-bg); color:var(--confirmed); } .badge-updated { background:var(--updated-bg); color:var(--updated); }
-.back { background:transparent; border:0; color:var(--navy); font-family:inherit; font-size:13.5px; font-weight:600; display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:0; margin-bottom:18px; }
+.back { background:transparent; border:0; color:var(--govbb-teal-00); font-family:inherit; font-size:13.5px; font-weight:600; display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:0; margin-bottom:18px; }
 .form-head { display:flex; gap:15px; align-items:center; margin-bottom:8px; }
 .form-head h2 { font-size:22px; margin-bottom:7px; }
 .form-sub { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -1105,8 +1118,8 @@ textarea { resize:vertical; }
 .role-row { display:grid; grid-template-columns:1fr 150px 36px; gap:8px; align-items:center; }
 .role-del { border:1px solid var(--line); background:var(--surface); border-radius:8px; height:38px; display:grid; place-items:center; cursor:pointer; color:var(--danger); }
 .role-del:hover { background:#fbf2f2; border-color:var(--danger); }
-.role-add { align-self:flex-start; margin-top:4px; background:transparent; border:1px dashed var(--line); color:var(--navy); font-family:inherit; font-weight:600; font-size:13px; border-radius:8px; padding:8px 12px; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
-.role-add:hover { border-color:var(--navy); background:#f7faff; }
+.role-add { align-self:flex-start; margin-top:4px; background:transparent; border:1px dashed var(--line); color:var(--govbb-teal-00); font-family:inherit; font-weight:600; font-size:13px; border-radius:var(--govbb-radius); padding:8px 12px; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+.role-add:hover { border-color:var(--govbb-teal-00); background:var(--govbb-teal-10); }
 .rep-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .lbl { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:var(--navy); }
 .lbl span i { color:var(--danger); font-style:normal; margin-left:2px; } .lbl.wide { grid-column:1 / -1; }
@@ -1116,7 +1129,7 @@ textarea { resize:vertical; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:24px; }
 .btn { font-family:inherit; font-weight:600; font-size:14px; border-radius:var(--govbb-radius); padding:11px 18px; display:inline-flex; align-items:center; gap:7px; cursor:pointer; border:1px solid transparent; transition:.16s; }
 .btn.sm { padding:8px 13px; font-size:13px; }
-.btn.primary { background:var(--navy); color:#fff; } .btn.primary:hover { background:var(--navy-deep); }
+.btn.primary { background:var(--govbb-teal-00); color:#fff; } .btn.primary:hover { background:#1a777d; box-shadow:inset 0 0 0 4px rgba(222,245,246,.10); } .btn.primary:active { background:var(--govbb-teal-05); }
 .btn.ghost { background:var(--surface); border-color:var(--line); color:var(--ink); } .btn.ghost:hover { border-color:var(--muted); }
 .btn.ghost.danger { color:var(--danger); } .btn.ghost.danger:hover { border-color:var(--danger); background:#fbf2f2; }
 .done { text-align:center; padding:50px 20px; }
