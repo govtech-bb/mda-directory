@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 // Icons removed by request — every icon resolves to a no-op component so the
 // UI is entirely text-based (in keeping with the icon-light gov.bb style).
 const NoIcon = () => null;
@@ -368,7 +368,12 @@ export default function App() {
   const [screen, setScreen] = useState("list");
   const [form, setForm] = useState(null);
   const [affirm, setAffirm] = useState(false);
-  const [formError, setFormError] = useState("");
+  const [formErrors, setFormErrors] = useState([]);
+  const [lastRef, setLastRef] = useState("");
+  const errorSummaryRef = useRef(null);
+  const formHeadingRef = useRef(null);
+  const errOf = (id) => formErrors.find((e) => e.id === id)?.msg;
+  const onRowKey = (fn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } };
   const [dashOpen, setDashOpen] = useState({});
   const [rowOpen, setRowOpen] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -396,6 +401,16 @@ export default function App() {
       setRecords(data); setLoading(false);
     })();
   }, []);
+
+  // Move keyboard/screen-reader focus to the form heading when a form opens.
+  useEffect(() => {
+    if (screen === "form" && formHeadingRef.current) formHeadingRef.current.focus();
+  }, [screen, selectedId]);
+
+  // Move focus to the error summary when validation fails.
+  useEffect(() => {
+    if (formErrors.length && errorSummaryRef.current) errorSummaryRef.current.focus();
+  }, [formErrors]);
 
   const persist = async (next) => { setRecords(next); await saveRecords(next); };
   const ministries = useMemo(() => records.filter((r) => r.kind === "ministry").sort((a, b) => a.name.localeCompare(b.name)), [records]);
@@ -467,7 +482,7 @@ export default function App() {
       repName: rec.repName || "", repTitle: rec.repTitle || "", repEmail: rec.repEmail || "", notes: rec.notes || "",
       confirm: { phone: false, email: false, address: false, roles: false },
     });
-    setAffirm(false); setFormError(""); setScreen("form");
+    setAffirm(false); setFormErrors([]); setScreen("form");
   };
   const setRole = (i, k, v) => setForm((f) => ({ ...f, roles: f.roles.map((row, idx) => idx === i ? { ...row, [k]: v } : row) }));
   const addRole = () => setForm((f) => ({ ...f, roles: [...f.roles, { r: "", t: "" }] }));
@@ -475,11 +490,6 @@ export default function App() {
 
   const submitValidation = async () => {
     if (!selected || !form) return;
-    if (!form.repName.trim()) { setFormError("Please enter your name so we know who validated this record."); return; }
-    if (!form.repTitle.trim()) { setFormError("Please enter your title or role."); return; }
-    if (!form.repEmail.trim()) { setFormError("Please enter your work email address."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.repEmail.trim())) { setFormError("Please enter a valid email address."); return; }
-    if (!affirm) { setFormError("Please confirm you are authorised to validate on behalf of this organisation."); return; }
     const rolesClean = form.roles.map((x) => ({ r: (x.r || "").trim(), t: (x.t || "").trim() })).filter((x) => x.r || x.t);
     const phoneChanged = form.phone.trim() !== (selected.currentPhone || "").trim();
     const emailChanged = form.email.trim() !== (selected.currentEmail || "").trim();
@@ -487,12 +497,19 @@ export default function App() {
     const rolesChanged = JSON.stringify(rolesClean) !== JSON.stringify(selected.roles || []);
     // Every detail already on record must be either edited (a correction) or explicitly confirmed correct.
     const need = (has, ch, ok) => has && !ch && !ok;
-    if (
-      need((selected.currentPhone || "").trim(), phoneChanged, form.confirm.phone) ||
-      need((selected.currentEmail || "").trim(), emailChanged, form.confirm.email) ||
-      need((selected.currentAddress || "").trim(), addressChanged, form.confirm.address) ||
-      need((selected.roles || []).length, rolesChanged, form.confirm.roles)
-    ) { setFormError("Please confirm each detail already on record is correct (or edit it) before submitting."); return; }
+    // Collect all problems in page order for the error summary (GOV.UK pattern).
+    const errs = [];
+    if (need((selected.currentPhone || "").trim(), phoneChanged, form.confirm.phone)) errs.push({ id: "field-phone", msg: "Confirm the telephone number is correct, or edit it" });
+    if (need((selected.currentEmail || "").trim(), emailChanged, form.confirm.email)) errs.push({ id: "field-email", msg: "Confirm the email address is correct, or edit it" });
+    if (need((selected.currentAddress || "").trim(), addressChanged, form.confirm.address)) errs.push({ id: "field-address", msg: "Confirm the physical address is correct, or edit it" });
+    if (need((selected.roles || []).length, rolesChanged, form.confirm.roles)) errs.push({ id: "field-roles", msg: "Confirm the roles and numbers are correct, or edit them" });
+    if (!form.repName.trim()) errs.push({ id: "rep-name", msg: "Enter your name" });
+    if (!form.repTitle.trim()) errs.push({ id: "rep-title", msg: "Enter your title or role" });
+    if (!form.repEmail.trim()) errs.push({ id: "rep-email", msg: "Enter your work email address" });
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.repEmail.trim())) errs.push({ id: "rep-email", msg: "Enter an email address in the correct format, like name@agency.gov.bb" });
+    if (!affirm) errs.push({ id: "affirm", msg: "Confirm you are authorised to validate this information" });
+    if (errs.length) { setFormErrors(errs); return; }
+    setFormErrors([]);
     const changed = phoneChanged || emailChanged || addressChanged || rolesChanged;
     const hadOnFile = selected.currentPhone || selected.currentEmail || selected.currentAddress || (selected.roles || []).length;
     const fieldChange = (label, cur, val, ch) => {
@@ -512,14 +529,16 @@ export default function App() {
     else if (hadRoles && !rolesChanged) changes.push({ field: "Roles", action: "confirmed" });
     else if (!hadRoles && rolesClean.length) changes.push({ field: "Roles", action: "added", to: `${rolesClean.length} added` });
     const actor = `${form.repName.trim()}${form.repTitle.trim() ? ", " + form.repTitle.trim() : ""}`;
-    const entry = { t: new Date().toISOString(), kind: "submitted", actor, email: form.repEmail.trim(), changes };
+    const subRef = "MDA-" + Math.random().toString(36).slice(2, 7).toUpperCase();
+    const entry = { t: new Date().toISOString(), kind: "submitted", actor, email: form.repEmail.trim(), changes, ref: subRef };
     const next = records.map((r) => r.id === selected.id ? {
       ...r, status: "pending", submissionType: changed || !hadOnFile ? "updated" : "confirmed",
       validatedPhone: form.phone.trim(), validatedEmail: form.email.trim(), validatedAddress: form.address.trim(),
       validatedRoles: rolesClean, repName: form.repName.trim(), repTitle: form.repTitle.trim(),
       repEmail: form.repEmail.trim(), notes: form.notes.trim(), submittedAt: new Date().toISOString(),
-      reviewedAt: null, reviewedBy: "", audit: [...(r.audit || []), entry],
+      submissionRef: subRef, reviewedAt: null, reviewedBy: "", audit: [...(r.audit || []), entry],
     } : r);
+    setLastRef(subRef);
     await persist(next); setScreen("done");
   };
 
@@ -727,7 +746,7 @@ export default function App() {
       <div className="service-hdr">
         <div className="service-hdr-inner">
           <h1>MDA Contact Information Validation Portal</h1>
-          <p>Confirm or update the official contact details and key role numbers for each Ministry and the departments and agencies beneath it.</p>
+          <p>Check that the published contact details and key role numbers for your Ministry, Department or Agency (MDA) are correct. GovTech Barbados keeps this record so the public can reach the right office through gov.bb.</p>
         </div>
       </div>
 
@@ -738,9 +757,10 @@ export default function App() {
           screen === "list" ? (
             <section className="fade">
               <div className="intro"><h2>Find your organisation</h2><p>Open your ministry, then choose the ministry itself or the department you represent.</p></div>
-              <div className="searchbar"><Search size={18} />
-                <input placeholder="Search ministries or departments…" value={search} onChange={(e) => setSearch(e.target.value)} />
-                {search && <button className="clear" onClick={() => setSearch("")}>Clear</button>}
+              <label htmlFor="mda-search" className="sr-only">Search ministries or departments</label>
+              <div className="searchbar">
+                <input id="mda-search" type="search" placeholder="Search ministries or departments…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                {search && <button className="clear" onClick={() => setSearch("")} aria-label="Clear search">Clear</button>}
               </div>
               {visibleGroups.length === 0 ? <div className="empty">No organisations match your search.</div> : (
                 <ul className="groups">
@@ -749,7 +769,7 @@ export default function App() {
                     const isOpen = !!q || openGroups[g.ministry.id];
                     return (
                       <li key={g.ministry.id} className="group" style={{ animationDelay: `${i * 35}ms` }}>
-                        <button className="group-head" onClick={() => !q && setOpenGroups((o) => ({ ...o, [g.ministry.id]: !o[g.ministry.id] }))}>
+                        <button className="group-head" aria-expanded={isOpen} onClick={() => !q && setOpenGroups((o) => ({ ...o, [g.ministry.id]: !o[g.ministry.id] }))}>
                           <ChevronRight size={16} className={`chev${isOpen ? " rot" : ""}`} />
                           <Landmark size={18} className="group-ic" />
                           <span className="group-name">{g.ministry.name}</span>
@@ -758,13 +778,13 @@ export default function App() {
                         {isOpen && (
                           <ul className="rowlist">
                             {g.showMinistryRow && (
-                              <li className="vrow ministry" onClick={() => openValidation(g.ministry)}>
+                              <li className="vrow ministry" role="button" tabIndex={0} aria-label={`Validate ${g.ministry.name} — head office`} onKeyDown={onRowKey(() => openValidation(g.ministry))} onClick={() => openValidation(g.ministry)}>
                                 <div className="vrow-body"><span className="vrow-name">{g.ministry.name}</span><span className="kindtag">Ministry — head office</span></div>
                                 <StatusBadge status={g.ministry.status} /><ChevronRight size={16} className="vrow-go" />
                               </li>
                             )}
                             {g.depts.map((d) => (
-                              <li key={d.id} className="vrow dept" onClick={() => openValidation(d)}>
+                              <li key={d.id} className="vrow dept" role="button" tabIndex={0} aria-label={`Validate ${d.name}`} onKeyDown={onRowKey(() => openValidation(d))} onClick={() => openValidation(d)}>
                                 <CornerDownRight size={15} className="dept-ic" />
                                 <div className="vrow-body"><span className="vrow-name">{d.name}</span>{(d.currentPhone || d.currentEmail) ? null : <span className="needstag">Needs details</span>}</div>
                                 <StatusBadge status={d.status} /><ChevronRight size={16} className="vrow-go" />
@@ -784,24 +804,34 @@ export default function App() {
                 ? <div className="link-banner"><ShieldCheck size={15} /> You're validating the record for your organisation. Please review and submit.</div>
                 : <button className="back" onClick={() => setScreen("list")}><ChevronLeft size={16} /> All organisations</button>}
               <div className="form-head">
-                <div className="card-icon lg">{selected.kind === "ministry" ? <Landmark size={22} /> : <Building2 size={22} />}</div>
-                <div><h2>{selected.name}</h2>
+                <div><h2 ref={formHeadingRef} tabIndex={-1}>{selected.name}</h2>
                   <div className="form-sub">
                     {selected.kind === "ministry" ? <span className="kindtag">Ministry — head office</span> : <span className="kindtag">Department under {parentOf(selected)?.name}</span>}
                     <StatusBadge status={selected.status} />
                   </div>
                 </div>
               </div>
-              <p className="form-lead">Review each field. For every detail already on record, confirm it's correct or edit it. Then submit for review.</p>
+              {formErrors.length > 0 && (
+                <div className="error-summary" role="alert" tabIndex={-1} ref={errorSummaryRef} aria-labelledby="error-summary-title">
+                  <h2 className="error-summary-title" id="error-summary-title">There is a problem</h2>
+                  <ul className="error-summary-list">
+                    {formErrors.map((e) => (
+                      <li key={e.id}><a href={`#${e.id}`} onClick={(ev) => { ev.preventDefault(); const el = document.getElementById(e.id); if (el) { el.scrollIntoView({ block: "center" }); el.focus(); } }}>{e.msg}</a></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="form-lead">Please check each detail below. GovTech Barbados publishes these so the public can reach your office through gov.bb — confirm anything that is correct, and edit anything that is wrong.</p>
               <div className="fields">
-                <Field icon={Phone} label="Main telephone number" onfile={selected.currentPhone} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} placeholder="e.g. (246) 555-0100" confirmed={form.confirm.phone} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, phone: c } }))} />
-                <Field icon={Mail} label="Email address" type="email" onfile={selected.currentEmail} value={form.email} onChange={(v) => setForm({ ...form, email: v })} placeholder="e.g. info@agency.gov.bb" confirmed={form.confirm.email} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, email: c } }))} />
-                <Field icon={MapPin} label="Physical address" textarea onfile={selected.currentAddress} value={form.address} onChange={(v) => setForm({ ...form, address: v })} placeholder="Building, street, city, parish" confirmed={form.confirm.address} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, address: c } }))} />
+                <Field id="field-phone" label="Main telephone number" type="tel" inputmode="tel" error={errOf("field-phone")} onfile={selected.currentPhone} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} placeholder="e.g. (246) 555-0100" confirmed={form.confirm.phone} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, phone: c } }))} />
+                <Field id="field-email" label="Email address" type="email" inputmode="email" error={errOf("field-email")} onfile={selected.currentEmail} value={form.email} onChange={(v) => setForm({ ...form, email: v })} placeholder="e.g. info@agency.gov.bb" confirmed={form.confirm.email} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, email: c } }))} />
+                <Field id="field-address" label="Physical address" textarea error={errOf("field-address")} onfile={selected.currentAddress} value={form.address} onChange={(v) => setForm({ ...form, address: v })} placeholder="Building, street, city, parish" confirmed={form.confirm.address} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, address: c } }))} />
               </div>
 
-              <div className="rep-block">
-                <h3><Users size={17} /> Key contacts &amp; role numbers</h3>
+              <div className="rep-block" id="field-roles" tabIndex={-1}>
+                <h3>Key contacts and role numbers</h3>
                 <p className="roles-hint">Confirm these direct lines, correct any that have changed, and add or remove rows as needed.</p>
+                {errOf("field-roles") && <p className="field-err"><span className="sr-only">Error: </span>{errOf("field-roles")}</p>}
                 <div className="roles-edit">
                   {form.roles.length === 0 && <p className="roles-empty">None on record yet — add any direct lines you'd like listed.</p>}
                   {form.roles.map((row, i) => (
@@ -823,24 +853,45 @@ export default function App() {
               </div>
 
               <div className="rep-block">
-                <h3>Validated by</h3>
+                <h3>Your details</h3>
+                <p className="roles-hint">So we know who checked this record. We may contact you if we have a question about your update.</p>
                 <div className="rep-grid">
-                  <label className="lbl"><span>Your name<i>*</i></span><input value={form.repName} onChange={(e) => setForm({ ...form, repName: e.target.value })} placeholder="Full name" /></label>
-                  <label className="lbl"><span>Title / role<i>*</i></span><input value={form.repTitle} onChange={(e) => setForm({ ...form, repTitle: e.target.value })} placeholder="e.g. Administrative Officer" /></label>
-                  <label className="lbl wide"><span>Your work email<i>*</i></span><input type="email" value={form.repEmail} onChange={(e) => setForm({ ...form, repEmail: e.target.value })} placeholder="name@agency.gov.bb" /></label>
-                  <label className="lbl wide"><span>Notes (optional)</span><textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Anything else we should know" /></label>
+                  <div className="lbl">
+                    <label htmlFor="rep-name">Your name</label>
+                    {errOf("rep-name") && <p className="field-err" id="rep-name-error"><span className="sr-only">Error: </span>{errOf("rep-name")}</p>}
+                    <input id="rep-name" autoComplete="name" aria-invalid={errOf("rep-name") ? true : undefined} aria-describedby={errOf("rep-name") ? "rep-name-error" : undefined} value={form.repName} onChange={(e) => setForm({ ...form, repName: e.target.value })} placeholder="Full name" />
+                  </div>
+                  <div className="lbl">
+                    <label htmlFor="rep-title">Title or role</label>
+                    {errOf("rep-title") && <p className="field-err" id="rep-title-error"><span className="sr-only">Error: </span>{errOf("rep-title")}</p>}
+                    <input id="rep-title" autoComplete="organization-title" aria-invalid={errOf("rep-title") ? true : undefined} aria-describedby={errOf("rep-title") ? "rep-title-error" : undefined} value={form.repTitle} onChange={(e) => setForm({ ...form, repTitle: e.target.value })} placeholder="e.g. Administrative Officer" />
+                  </div>
+                  <div className="lbl wide">
+                    <label htmlFor="rep-email">Your work email</label>
+                    {errOf("rep-email") && <p className="field-err" id="rep-email-error"><span className="sr-only">Error: </span>{errOf("rep-email")}</p>}
+                    <input id="rep-email" type="email" inputMode="email" autoComplete="email" aria-invalid={errOf("rep-email") ? true : undefined} aria-describedby={errOf("rep-email") ? "rep-email-error" : undefined} value={form.repEmail} onChange={(e) => setForm({ ...form, repEmail: e.target.value })} placeholder="name@agency.gov.bb" />
+                  </div>
+                  <div className="lbl wide">
+                    <label htmlFor="rep-notes">Notes (optional)</label>
+                    <textarea id="rep-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Anything else we should know" />
+                  </div>
                 </div>
               </div>
 
-              <label className="affirm"><input type="checkbox" checked={affirm} onChange={(e) => setAffirm(e.target.checked)} /><span>I confirm I am authorised to validate this information on behalf of this organisation, and that the details above are accurate.</span></label>
-              {formError && <div className="error"><Info size={15} /> {formError}</div>}
-              <div className="actions">{!linkMode && <button className="btn ghost" onClick={() => setScreen("list")}>Cancel</button>}<button className="btn primary" onClick={submitValidation}><Check size={17} /> Submit validation</button></div>
+              <div className="affirm-wrap">
+                {errOf("affirm") && <p className="field-err" id="affirm-error"><span className="sr-only">Error: </span>{errOf("affirm")}</p>}
+                <label className="affirm"><input id="affirm" type="checkbox" checked={affirm} aria-invalid={errOf("affirm") ? true : undefined} aria-describedby={errOf("affirm") ? "affirm-error" : undefined} onChange={(e) => setAffirm(e.target.checked)} /><span>I confirm I am authorised to validate this information on behalf of this organisation, and that the details above are accurate.</span></label>
+              </div>
+              <div className="actions">{!linkMode && <button className="btn ghost" onClick={() => setScreen("list")}>Cancel</button>}<button className="btn primary" onClick={submitValidation}>Submit validation</button></div>
             </section>
           ) : screen === "done" && selected ? (
             <section className="fade done">
-              <div className="done-mark"><CheckCircle2 size={56} strokeWidth={1.8} /></div>
-              <h2>Submitted for review</h2>
-              <p>Thank you. The details for <strong>{selected.name}</strong> have been submitted and are now <strong>pending review</strong> by the coordinating team before the official record is updated.</p>
+              <div className="confirm-panel">
+                <h2 ref={formHeadingRef} tabIndex={-1}>Submitted for review</h2>
+                {lastRef && <p className="confirm-ref">Your reference<br /><strong>{lastRef}</strong></p>}
+              </div>
+              <p>Thank you. The details for <strong>{selected.name}</strong> have been submitted and are now <strong>pending review</strong> by the GovTech Barbados team before the public record is updated.</p>
+              <p className="done-next">Please keep your reference number in case you need to follow up. We may email you if we have a question about your update.</p>
               <div className="done-actions">{linkMode
                 ? <p className="done-close">You may now close this page.</p>
                 : <button className="btn primary" onClick={() => { setScreen("list"); setSearch(""); }}>Validate another organisation</button>}</div>
@@ -1064,17 +1115,21 @@ export default function App() {
   );
 }
 
-function Field({ icon: Icon, label, onfile, value, onChange, placeholder, textarea, type, confirmed, onConfirm }) {
+function Field({ id, label, onfile, value, onChange, placeholder, textarea, type, inputmode, autoComplete, confirmed, onConfirm, error }) {
   const hasOnFile = onfile && onfile.trim();
   const changed = hasOnFile && value.trim() !== onfile.trim();
+  const errId = id ? `${id}-error` : undefined;
+  const describedBy = error ? errId : undefined;
   return (
-    <div className="field">
-      <div className="field-label"><Icon size={16} /> {label}</div>
+    <div className={`field${error ? " field-error-wrap" : ""}`}>
+      <label className="field-label" htmlFor={id}>{label}</label>
       {hasOnFile && <div className="onfile">On record: <span>{onfile}</span></div>}
-      {textarea ? <textarea rows={2} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-        : <input type={type || "text"} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />}
+      {error && <p className="field-err" id={errId}><span className="sr-only">Error: </span>{error}</p>}
+      {textarea
+        ? <textarea id={id} rows={2} value={value} placeholder={placeholder} aria-invalid={error ? true : undefined} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value)} />
+        : <input id={id} type={type || "text"} inputMode={inputmode} autoComplete={autoComplete} value={value} placeholder={placeholder} aria-invalid={error ? true : undefined} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value)} />}
       {hasOnFile && (changed
-        ? <div className="field-changed"><PencilLine size={13} /> You've edited this — it will be submitted as a correction.</div>
+        ? <div className="field-changed">You've edited this — it will be submitted as a correction.</div>
         : <label className={`confirm-field${confirmed ? " on" : ""}`}><input type="checkbox" checked={!!confirmed} onChange={(e) => onConfirm(e.target.checked)} /><span>I've checked this and confirm it is correct</span></label>)}
     </div>
   );
@@ -1172,7 +1227,7 @@ h3 { display:flex; align-items:center; gap:8px; }
 .searchbar { display:flex; align-items:center; gap:10px; background:var(--surface); border:2px solid var(--ink); border-radius:var(--govbb-radius); padding:11px 14px; color:var(--muted); }
 .searchbar:focus-within { box-shadow:0 0 0 4px var(--govbb-color-focus); }
 .searchbar input { flex:1; border:0; outline:0; font-family:inherit; font-size:17px; color:var(--ink); background:transparent; }
-.clear { border:0;background:transparent;cursor:pointer;color:var(--govbb-teal-00);display:flex;font-family:inherit;font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:2px;flex:0 0 auto; }
+.clear { border:0;background:transparent;cursor:pointer;color:var(--govbb-teal-00);display:inline-flex;align-items:center;font-family:inherit;font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:2px;flex:0 0 auto;padding:8px 6px;min-height:44px; }
 .empty { padding:40px; text-align:center; color:var(--muted); }
 .groups { list-style:none; margin:18px 0 0; padding:0; display:flex; flex-direction:column; gap:10px; }
 .group { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; animation:fade .4s ease both; }
@@ -1180,7 +1235,7 @@ h3 { display:flex; align-items:center; gap:8px; }
 .group-head:hover { background:#f5f6f8; }
 .chev { color:var(--muted); transition:transform .18s; flex:0 0 auto; } .chev.rot, .dgroup-head .rot { transform:rotate(90deg); }
 .group-ic { color:var(--navy); flex:0 0 auto; } .group-name { flex:1; font-weight:600; font-size:15.5px; }
-.rollup { font-size:12px; font-weight:700; color:var(--pending); background:var(--pending-bg); border-radius:20px; padding:3px 10px; white-space:nowrap; } .rollup.full { color:var(--confirmed); background:var(--confirmed-bg); }
+.rollup { font-size:12px; font-weight:700; color:var(--pending); background:var(--pending-bg); border-radius:var(--govbb-radius); padding:3px 10px; white-space:nowrap; } .rollup.full { color:var(--confirmed); background:var(--confirmed-bg); }
 .rowlist { list-style:none; margin:0; padding:0 0 6px; border-top:1px solid var(--line); }
 .vrow { display:flex; align-items:center; gap:11px; padding:12px 17px 12px 20px; cursor:pointer; transition:.14s; border-bottom:1px solid #eef0f3; }
 .vrow:last-child { border-bottom:0; } .vrow:hover { background:#f5f6f8; } .vrow.ministry { background:#f5f6f8; }
@@ -1190,7 +1245,7 @@ h3 { display:flex; align-items:center; gap:8px; }
 .kindtag { font-size:11.5px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
 .needstag { font-size:11px; color:var(--pending); font-weight:600; }
 .vrow-go { color:var(--govbb-teal-00); flex:0 0 auto; }
-.badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:20px; width:fit-content; white-space:nowrap; }
+.badge { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:var(--govbb-radius); width:fit-content; white-space:nowrap; }
 .badge-pending { background:var(--pending-bg); color:var(--pending); } .badge-confirmed { background:var(--confirmed-bg); color:var(--confirmed); } .badge-updated { background:var(--updated-bg); color:var(--updated); }
 .back { background:transparent; border:0; color:var(--govbb-teal-00); font-family:inherit; font-size:13.5px; font-weight:600; display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:0; margin-bottom:18px; }
 .form-head { display:flex; gap:15px; align-items:center; margin-bottom:8px; }
@@ -1203,7 +1258,7 @@ h3 { display:flex; align-items:center; gap:8px; }
 .onfile { font-size:16px; color:var(--muted); margin-bottom:8px; } .onfile span { color:var(--ink); }
 .confirm-field { display:flex; align-items:flex-start; gap:9px; margin-top:8px; font-size:15px; font-weight:500; color:var(--muted); cursor:pointer; padding:10px 12px; border:1px solid var(--line); border-radius:var(--govbb-radius); background:#f5f6f8; width:100%; max-width:100%; transition:.15s; }
 .confirm-field:hover { border-color:var(--govbb-teal-00); }
-.field .confirm-field input, .confirm-field input { width:18px; min-width:18px; height:18px; margin-top:1px; padding:0; border:0; border-radius:0; accent-color:var(--confirmed); flex:0 0 auto; }
+.field .confirm-field input, .confirm-field input { width:24px; min-width:24px; height:24px; margin-top:0; padding:0; border:0; border-radius:0; accent-color:var(--confirmed); flex:0 0 auto; }
 .confirm-field span { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
 .confirm-field.on { color:var(--confirmed); border-color:#c2e2cf; background:var(--confirmed-bg); }
 .field-changed { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:15px; font-weight:500; color:var(--updated); }
@@ -1225,8 +1280,24 @@ textarea { resize:vertical; }
 .lbl { display:flex; flex-direction:column; gap:6px; font-size:16px; font-weight:700; color:var(--ink); }
 .lbl span i { color:var(--danger); font-style:normal; margin-left:2px; } .lbl.wide { grid-column:1 / -1; }
 .affirm { display:flex; gap:11px; align-items:flex-start; margin:22px 0 6px; font-size:17px; color:var(--ink); cursor:pointer; }
-.affirm input { margin-top:3px; width:16px;height:16px; accent-color:var(--navy); flex:0 0 auto; }
-.error { display:flex; align-items:center; gap:8px; color:var(--danger); font-size:13.5px; background:#fbeaea; border:1px solid #f0cccc; padding:10px 13px; border-radius:var(--govbb-radius); margin-top:14px; }
+.affirm input { margin-top:2px; width:24px; height:24px; accent-color:var(--govbb-teal-00); flex:0 0 auto; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.error-summary { border:4px solid var(--danger); background:var(--surface); padding:16px 18px; margin-bottom:24px; border-radius:var(--govbb-radius); }
+.error-summary:focus { outline:3px solid var(--govbb-color-focus); outline-offset:2px; }
+.error-summary-title { font-size:20px; color:var(--danger); margin:0 0 10px; }
+.error-summary-list { margin:0; padding-left:18px; } .error-summary-list li { margin:5px 0; }
+.error-summary-list a { color:var(--danger); font-weight:700; text-underline-offset:2px; }
+.vrow:focus-visible, .group-head:focus-visible, .back:focus-visible, .role-add:focus-visible, .role-del:focus-visible, .clear:focus-visible, .btn:focus-visible, .error-summary-list a:focus-visible, .gov-footer-nav a:focus-visible, h2:focus-visible { outline:3px solid var(--govbb-color-focus); outline-offset:2px; }
+.vrow:focus-visible { outline-offset:-3px; }
+.field-err { color:var(--danger); font-weight:700; font-size:15px; margin:0 0 8px; }
+.field-error-wrap { border-left:4px solid var(--danger); padding-left:14px; }
+.field-error-wrap input, .field-error-wrap textarea { border-color:var(--danger); }
+.affirm-wrap { margin:22px 0 6px; }
+.confirm-panel { background:var(--confirmed); color:#fff; text-align:center; padding:32px 20px; border-radius:var(--govbb-radius); margin-bottom:22px; }
+.done .confirm-panel h2 { color:#fff; font-size:30px; margin:0; }
+.done .confirm-panel p { color:#fff; max-width:none; margin:14px 0 0; font-size:19px; }
+.confirm-ref strong { display:inline-block; margin-top:4px; font-size:26px; letter-spacing:.03em; }
+.done .done-next { margin-top:14px; font-size:16px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:24px; }
 .btn { font-family:inherit; font-weight:600; font-size:14px; border-radius:var(--govbb-radius); padding:11px 18px; display:inline-flex; align-items:center; gap:7px; cursor:pointer; border:1px solid transparent; transition:.16s; }
 .btn.sm { padding:8px 13px; font-size:13px; }
@@ -1292,7 +1363,7 @@ textarea { resize:vertical; }
 .subtabs { display:flex; gap:4px; margin:18px 0 4px; border-bottom:1px solid var(--line); }
 .subtab { background:transparent; border:0; border-bottom:2.5px solid transparent; font-family:inherit; font-size:13.5px; font-weight:600; color:var(--muted); padding:9px 14px; cursor:pointer; display:flex; align-items:center; gap:7px; }
 .subtab:hover { color:var(--ink); } .subtab.on { color:var(--ink); border-bottom-color:var(--govbb-teal-00); }
-.pill { background:var(--updated-bg); color:var(--updated); font-size:11px; font-weight:700; border-radius:20px; padding:1px 7px; }
+.pill { background:var(--updated-bg); color:var(--updated); font-size:11px; font-weight:700; border-radius:var(--govbb-radius); padding:1px 7px; }
 .subtab.on .pill { background:var(--govbb-teal-00); color:#fff; }
 .dash-view { padding-top:18px; }
 .overview-tools { display:flex; justify-content:flex-end; margin-bottom:8px; }
