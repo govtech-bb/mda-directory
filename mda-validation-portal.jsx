@@ -746,7 +746,7 @@ export default function App() {
       <div className="service-hdr">
         <div className="service-hdr-inner">
           <h1>MDA Contact Information Validation Portal</h1>
-          <p>Check that the published contact details and key role numbers for your Ministry, Department or Agency (MDA) are correct. GovTech Barbados keeps this record so the public can reach the right office through gov.bb.</p>
+          <p>Confirm or update the official contact details and key role phone numbers for your ministry, department or agency.</p>
         </div>
       </div>
 
@@ -756,7 +756,7 @@ export default function App() {
         ) : tab === "validate" ? (
           screen === "list" ? (
             <section className="fade">
-              <div className="intro"><h2>Find your organisation</h2><p>Open your ministry, then choose the ministry itself or the department you represent.</p></div>
+              <div className="intro"><h2>Find your organisation</h2><p>Select your ministry, then choose either the ministry itself or the department or agency you represent.</p></div>
               <label htmlFor="mda-search" className="sr-only">Search ministries or departments</label>
               <div className="searchbar">
                 <input id="mda-search" type="search" placeholder="Search ministries or departments…" value={search} onChange={(e) => setSearch(e.target.value)} />
