@@ -50,9 +50,29 @@ component.
 - **[lucide-react](https://lucide.dev)** for icons.
 - Styling is plain CSS (design tokens as custom properties) injected by the
   component — no build step or CSS framework required.
-- State persists through a shared `window.storage` bridge provided by the host
-  environment (key `mda-validation:records-v7`). Without that bridge the app
-  still runs and seeds the published contact data as a starting point.
+- State is entirely text-based — there are no icons.
+
+## Saving changes
+
+Records are persisted in layers, so the app works in any deployment:
+
+1. **Supabase** (shared) — when configured, every browser reads and writes the
+   same records, so a coordinator sees submissions made on any device.
+2. **localStorage** (per-device) — always kept as an offline cache, so changes
+   survive a reload even before a shared database is set up.
+3. A host `window.storage` bridge, if the environment provides one.
+
+### Enable the shared Supabase database
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the SQL editor, create the key-value table and policies (the exact SQL
+   is in the comment block at the top of `mda-validation-portal.jsx`).
+3. Paste the project **URL** and **anon/public key** into `SUPABASE_URL` and
+   `SUPABASE_ANON_KEY` near the top of `mda-validation-portal.jsx`.
+
+Until those are filled in, the app runs on localStorage alone. The anon key is
+safe to ship in client code, but tighten the row-level-security policies before
+storing anything sensitive.
 
 ## Run locally
 

@@ -11,6 +11,55 @@ const Search = NoIcon, Building2 = NoIcon, Phone = NoIcon, Mail = NoIcon, MapPin
 
 const KEY = "mda-validation:records-v7";
 const SHARED = true;
+
+// ---------------------------------------------------------------------------
+// Shared database (Supabase)
+// ---------------------------------------------------------------------------
+// Paste your Supabase project URL and anon (public) key below and every
+// browser reads/writes the same records — a coordinator sees submissions made
+// on any device. Leave them blank to run on localStorage only.
+//
+// One-time setup in the Supabase SQL editor:
+//
+//   create table if not exists kv (
+//     key        text primary key,
+//     data       jsonb not null,
+//     updated_at timestamptz not null default now()
+//   );
+//   alter table kv enable row level security;
+//   -- Prototype policy: allow the anon key to read and write this one table.
+//   create policy "kv anon read"  on kv for select using (true);
+//   create policy "kv anon write" on kv for insert with check (true);
+//   create policy "kv anon update" on kv for update using (true) with check (true);
+//
+// The anon key is safe to ship in client code; tighten the policies above
+// before this holds anything sensitive.
+const SUPABASE_URL = "";       // e.g. "https://xxxxxxxx.supabase.co"
+const SUPABASE_ANON_KEY = "";  // the project's anon / public key
+
+const supabaseReady = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+const sbHeaders = () => ({
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  "Content-Type": "application/json",
+});
+async function sbLoad() {
+  const url = `${SUPABASE_URL}/rest/v1/kv?key=eq.${encodeURIComponent(KEY)}&select=data`;
+  const res = await fetch(url, { headers: sbHeaders() });
+  if (!res.ok) throw new Error(`Supabase load ${res.status}`);
+  const rows = await res.json();
+  return rows && rows[0] ? rows[0].data : null;
+}
+async function sbSave(records) {
+  const url = `${SUPABASE_URL}/rest/v1/kv?on_conflict=key`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ key: KEY, data: records, updated_at: new Date().toISOString() }),
+  });
+  if (!res.ok) throw new Error(`Supabase save ${res.status}`);
+  return true;
+}
 // Shared access code for coordinator/reviewer sign-in. Change this to your team's code.
 const ACCESS_CODE = "mda-review-2026";
 const newId = () => "mda_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -269,17 +318,29 @@ function buildSeed() {
 const hasHostStore = () => typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
 
 async function loadRecords() {
+  // Shared cloud DB first (so every device sees the same records)…
+  if (supabaseReady()) {
+    try { const data = await sbLoad(); if (data) { try { window.localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {} return data; } }
+    catch (e) { console.warn("Supabase load failed, falling back to local cache", e); }
+  }
+  // …then the host store (Claude/artifact environment)…
   if (hasHostStore()) {
     try { const res = await window.storage.get(KEY, SHARED); if (res && res.value) return JSON.parse(res.value); }
     catch (e) {}
   }
+  // …then the browser's own cache.
   try { const local = window.localStorage.getItem(KEY); if (local) return JSON.parse(local); }
   catch (e) {}
   return null;
 }
 async function saveRecords(records) {
   const json = JSON.stringify(records);
+  // Always keep a local cache so the app works offline and after a reload.
   try { window.localStorage.setItem(KEY, json); } catch (e) {}
+  if (supabaseReady()) {
+    try { await sbSave(records); return true; }
+    catch (e) { console.warn("Supabase save failed, kept local copy", e); }
+  }
   if (hasHostStore()) {
     try { return !!(await window.storage.set(KEY, json, SHARED)); }
     catch (e) { /* host store unavailable — localStorage above still persisted it */ }
