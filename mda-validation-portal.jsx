@@ -34,8 +34,8 @@ const SHARED = true;
 //
 // The anon key is safe to ship in client code; tighten the policies above
 // before this holds anything sensitive.
-const SUPABASE_URL = "";       // e.g. "https://xxxxxxxx.supabase.co"
-const SUPABASE_ANON_KEY = "";  // the project's anon / public key
+const SUPABASE_URL = "https://odioindeqhrqaeicsfvw.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_56RAbq0YtRETE1B4tNzaQA_QFpe5l53"; // publishable (public) key
 
 const supabaseReady = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 const sbHeaders = () => ({
