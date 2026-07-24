@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  Search, Building2, Phone, Mail, MapPin, CheckCircle2, Clock,
-  PencilLine, Plus, Trash2, Download, ChevronLeft, ChevronRight, ShieldCheck,
-  X, RotateCcw, ClipboardCheck, Check, Info, FileEdit, Landmark, CornerDownRight, Users, Link2, Copy, Lock, LogOut
-} from "lucide-react";
+// Icons removed by request — every icon resolves to a no-op component so the
+// UI is entirely text-based (in keeping with the icon-light gov.bb style).
+const NoIcon = () => null;
+const Search = NoIcon, Building2 = NoIcon, Phone = NoIcon, Mail = NoIcon, MapPin = NoIcon,
+  CheckCircle2 = NoIcon, Clock = NoIcon, PencilLine = NoIcon, Plus = NoIcon, Trash2 = NoIcon,
+  Download = NoIcon, ChevronLeft = NoIcon, ChevronRight = NoIcon, ShieldCheck = NoIcon, X = NoIcon,
+  RotateCcw = NoIcon, ClipboardCheck = NoIcon, Check = NoIcon, Info = NoIcon, FileEdit = NoIcon,
+  Landmark = NoIcon, CornerDownRight = NoIcon, Users = NoIcon, Link2 = NoIcon, Copy = NoIcon,
+  Lock = NoIcon, LogOut = NoIcon;
 
 const KEY = "mda-validation:records-v7";
 const SHARED = true;
@@ -258,14 +262,29 @@ function buildSeed() {
   return records;
 }
 
+// Persistence: prefer the shared host store (window.storage) when present,
+// otherwise fall back to the browser's localStorage so changes survive a
+// reload in any deployment. A shared cloud database can be layered in here
+// later (see loadRecords/saveRecords) without touching the rest of the app.
+const hasHostStore = () => typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
+
 async function loadRecords() {
-  try { const res = await window.storage.get(KEY, SHARED); if (res && res.value) return JSON.parse(res.value); }
+  if (hasHostStore()) {
+    try { const res = await window.storage.get(KEY, SHARED); if (res && res.value) return JSON.parse(res.value); }
+    catch (e) {}
+  }
+  try { const local = window.localStorage.getItem(KEY); if (local) return JSON.parse(local); }
   catch (e) {}
   return null;
 }
 async function saveRecords(records) {
-  try { return !!(await window.storage.set(KEY, JSON.stringify(records), SHARED)); }
-  catch (e) { console.error("Save failed", e); return false; }
+  const json = JSON.stringify(records);
+  try { window.localStorage.setItem(KEY, json); } catch (e) {}
+  if (hasHostStore()) {
+    try { return !!(await window.storage.set(KEY, json, SHARED)); }
+    catch (e) { /* host store unavailable — localStorage above still persisted it */ }
+  }
+  return true;
 }
 
 const STATUS_META = {
@@ -630,24 +649,11 @@ export default function App() {
       <style>{CSS}</style>
       <div className="gov-banner">
         <div className="gov-banner-inner">
-          <span className="gov-banner-crest" aria-hidden>
-            <svg viewBox="0 0 24 24" width="15" height="15">
-              <path d="M12 3v18M6 21V11l6-4 6 4v10M8 21v-5h8v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
-            </svg>
-          </span>
           <span>Official website of the Government of Barbados</span>
         </div>
       </div>
       <header className="gov-hdr">
         <div className="gov-hdr-inner">
-          <span className="gov-hdr-crest" aria-hidden>
-            <svg viewBox="0 0 48 48" width="30" height="30">
-              <circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M16 30V20l8-5 8 5v10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M20 30v-6h8v6" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <line x1="13" y1="31" x2="35" y2="31" stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-          </span>
           <span className="gov-hdr-word">Government of Barbados</span>
         </div>
       </header>
@@ -679,7 +685,7 @@ export default function App() {
               <div className="intro"><h2>Find your organisation</h2><p>Open your ministry, then choose the ministry itself or the department you represent.</p></div>
               <div className="searchbar"><Search size={18} />
                 <input placeholder="Search ministries or departments…" value={search} onChange={(e) => setSearch(e.target.value)} />
-                {search && <button className="clear" onClick={() => setSearch("")}><X size={15} /></button>}
+                {search && <button className="clear" onClick={() => setSearch("")}>Clear</button>}
               </div>
               {visibleGroups.length === 0 ? <div className="empty">No organisations match your search.</div> : (
                 <ul className="groups">
@@ -747,7 +753,7 @@ export default function App() {
                     <div className="role-row" key={i}>
                       <input className="role-r" value={row.r} placeholder="Role / office" onChange={(e) => setRole(i, "r", e.target.value)} />
                       <input className="role-t" value={row.t} placeholder="Telephone" onChange={(e) => setRole(i, "t", e.target.value)} />
-                      <button className="role-del" onClick={() => delRole(i)} title="Remove"><X size={15} /></button>
+                      <button className="role-del" onClick={() => delRole(i)} title="Remove">Remove</button>
                     </div>
                   ))}
                   <button className="role-add" onClick={addRole}><Plus size={14} /> Add a role</button>
@@ -825,7 +831,7 @@ export default function App() {
                   <div className="links-tools">
                     <button className="btn ghost sm" onClick={copyAllLinks}>{copiedKey === "all" ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy all</>}</button>
                     <button className="btn ghost sm" onClick={exportLinksCsv}><Download size={14} /> Download links (CSV)</button>
-                    <div className="links-search"><Search size={15} /><input placeholder="Filter…" value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} />{linkSearch && <button className="clear" onClick={() => setLinkSearch("")}><X size={14} /></button>}</div>
+                    <div className="links-search"><Search size={15} /><input placeholder="Filter…" value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} />{linkSearch && <button className="clear" onClick={() => setLinkSearch("")}>Clear</button>}</div>
                   </div>
                   <ul className="links-list">
                     {list.map((r) => (
@@ -995,14 +1001,6 @@ export default function App() {
           </nav>
           <hr className="gov-footer-divider" aria-hidden />
           <div className="gov-footer-end">
-            <span className="gov-footer-crest" aria-hidden>
-              <svg viewBox="0 0 48 48" width="26" height="26">
-                <circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M16 30V20l8-5 8 5v10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                <path d="M20 30v-6h8v6" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                <line x1="13" y1="31" x2="35" y2="31" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
-            </span>
             <p className="gov-footer-copy">© {new Date().getFullYear()} Government of Barbados</p>
           </div>
         </div>
@@ -1080,7 +1078,7 @@ const CSS = `
   --paper:#f3f4f6; --surface:var(--govbb-white-00); --ink:var(--govbb-black-00); --muted:var(--govbb-mid-grey-00); --line:var(--govbb-grey-00);
   --confirmed:var(--govbb-green-00); --confirmed-bg:var(--govbb-green-10); --pending:#7a5c12; --pending-bg:var(--govbb-yellow-10);
   --updated:var(--govbb-teal-00); --updated-bg:var(--govbb-teal-10); --danger:var(--govbb-red-00);
-  font-family:'Figtree',system-ui,-apple-system,'Segoe UI','Roboto',sans-serif; color:var(--ink); background:var(--paper); min-height:100vh; line-height:1.5; display:flex; flex-direction:column;
+  font-family:'Figtree',system-ui,-apple-system,'Segoe UI','Roboto',sans-serif; color:var(--ink); background:var(--paper); min-height:100vh; line-height:1.5; font-size:18px; display:flex; flex-direction:column;
 }
 .root * { box-sizing:border-box; }
 h1,h2,h3 { font-family:'Figtree',system-ui,sans-serif; font-weight:700; letter-spacing:-0.01em; margin:0; }
@@ -1115,11 +1113,11 @@ h3 { display:flex; align-items:center; gap:8px; }
 .fade { animation:fade .35s ease; } @keyframes fade { from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:none;} }
 .loading { display:flex; align-items:center; gap:12px; color:var(--muted); padding:60px 0; justify-content:center; }
 .spinner { width:20px;height:20px;border:2.5px solid var(--line);border-top-color:var(--navy);border-radius:50%;animation:spin .8s linear infinite; } @keyframes spin { to{transform:rotate(360deg);} }
-.intro h2 { font-size:24px; } .intro p { color:var(--muted); margin:5px 0 20px; }
+.intro h2 { font-size:30px; } .intro p { color:var(--muted); font-size:18px; margin:7px 0 22px; }
 .searchbar { display:flex; align-items:center; gap:10px; background:var(--surface); border:2px solid var(--ink); border-radius:var(--govbb-radius); padding:11px 14px; color:var(--muted); }
 .searchbar:focus-within { box-shadow:0 0 0 4px var(--govbb-color-focus); }
-.searchbar input { flex:1; border:0; outline:0; font-family:inherit; font-size:15px; color:var(--ink); background:transparent; }
-.clear { border:0;background:transparent;cursor:pointer;color:var(--muted);display:flex; }
+.searchbar input { flex:1; border:0; outline:0; font-family:inherit; font-size:17px; color:var(--ink); background:transparent; }
+.clear { border:0;background:transparent;cursor:pointer;color:var(--govbb-teal-00);display:flex;font-family:inherit;font-size:15px;font-weight:600;text-decoration:underline;text-underline-offset:2px;flex:0 0 auto; }
 .empty { padding:40px; text-align:center; color:var(--muted); }
 .groups { list-style:none; margin:18px 0 0; padding:0; display:flex; flex-direction:column; gap:10px; }
 .group { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; animation:fade .4s ease both; }
@@ -1141,36 +1139,37 @@ h3 { display:flex; align-items:center; gap:8px; }
 .badge-pending { background:var(--pending-bg); color:var(--pending); } .badge-confirmed { background:var(--confirmed-bg); color:var(--confirmed); } .badge-updated { background:var(--updated-bg); color:var(--updated); }
 .back { background:transparent; border:0; color:var(--govbb-teal-00); font-family:inherit; font-size:13.5px; font-weight:600; display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:0; margin-bottom:18px; }
 .form-head { display:flex; gap:15px; align-items:center; margin-bottom:8px; }
-.form-head h2 { font-size:22px; margin-bottom:7px; }
+.form-head h2 { font-size:28px; margin-bottom:7px; }
 .form-sub { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.card-icon { flex:0 0 auto; width:48px;height:48px;border-radius:var(--radius-md); display:grid;place-items:center; background:var(--navy); color:var(--gold-soft); }
-.form-lead { color:var(--muted); font-size:14px; margin:14px 0 20px; }
+.card-icon { display:none; }
+.form-lead { color:var(--muted); font-size:18px; margin:14px 0 22px; }
 .fields { display:flex; flex-direction:column; gap:18px; }
-.field-label { display:flex; align-items:center; gap:7px; font-weight:600; font-size:14px; margin-bottom:7px; color:var(--navy); }
-.onfile { font-size:12.5px; color:var(--muted); margin-bottom:7px; } .onfile span { color:var(--ink); }
-.confirm-field { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12.5px; font-weight:500; color:var(--muted); cursor:pointer; padding:7px 10px; border:1px solid var(--line); border-radius:var(--govbb-radius); background:#f5f6f8; width:fit-content; transition:.15s; }
+.field-label { display:flex; align-items:center; gap:7px; font-weight:700; font-size:18px; margin-bottom:6px; color:var(--ink); }
+.onfile { font-size:16px; color:var(--muted); margin-bottom:8px; } .onfile span { color:var(--ink); }
+.confirm-field { display:flex; align-items:flex-start; gap:9px; margin-top:8px; font-size:15px; font-weight:500; color:var(--muted); cursor:pointer; padding:10px 12px; border:1px solid var(--line); border-radius:var(--govbb-radius); background:#f5f6f8; width:100%; max-width:100%; transition:.15s; }
 .confirm-field:hover { border-color:var(--govbb-teal-00); }
-.confirm-field input { width:15px; height:15px; accent-color:var(--confirmed); flex:0 0 auto; }
+.field .confirm-field input, .confirm-field input { width:18px; min-width:18px; height:18px; margin-top:1px; padding:0; border:0; border-radius:0; accent-color:var(--confirmed); flex:0 0 auto; }
+.confirm-field span { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
 .confirm-field.on { color:var(--confirmed); border-color:#c2e2cf; background:var(--confirmed-bg); }
-.field-changed { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:12.5px; font-weight:500; color:var(--updated); }
+.field-changed { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:15px; font-weight:500; color:var(--updated); }
 .field input, .field textarea, .lbl input, .lbl textarea, .add-row input, .add-row select, .edit-grid input, .edit-grid textarea, .role-row input {
-  width:100%; font-family:inherit; font-size:14.5px; color:var(--ink); border:2px solid var(--ink); border-radius:var(--govbb-radius); padding:9px 12px; outline:0; background:var(--surface); transition:.15s; }
+  width:100%; font-family:inherit; font-size:17px; color:var(--ink); border:2px solid var(--ink); border-radius:var(--govbb-radius); padding:10px 13px; outline:0; background:var(--surface); transition:.15s; }
 .field input:focus,.field textarea:focus,.lbl input:focus,.lbl textarea:focus,.add-row input:focus,.add-row select:focus,.edit-grid input:focus,.edit-grid textarea:focus,.role-row input:focus { border-color:var(--ink); box-shadow:0 0 0 4px var(--govbb-color-focus); }
 textarea { resize:vertical; }
 .rep-block { margin-top:26px; padding-top:22px; border-top:1px solid var(--line); }
-.rep-block h3 { font-size:17px; margin-bottom:6px; }
-.roles-hint { color:var(--muted); font-size:13px; margin:0 0 14px; }
+.rep-block h3 { font-size:21px; margin-bottom:6px; }
+.roles-hint { color:var(--muted); font-size:16px; margin:0 0 14px; }
 .roles-empty { color:var(--muted); font-size:13px; font-style:italic; margin:0 0 10px; }
 .roles-edit { display:flex; flex-direction:column; gap:8px; }
-.role-row { display:grid; grid-template-columns:1fr 150px 36px; gap:8px; align-items:center; }
-.role-del { border:1px solid var(--line); background:var(--surface); border-radius:var(--govbb-radius); height:38px; display:grid; place-items:center; cursor:pointer; color:var(--danger); }
+.role-row { display:grid; grid-template-columns:1fr 150px auto; gap:8px; align-items:center; }
+.role-del { border:1px solid var(--line); background:var(--surface); border-radius:var(--govbb-radius); height:44px; padding:0 12px; display:grid; place-items:center; cursor:pointer; color:var(--danger); font-family:inherit; font-size:14px; font-weight:600; }
 .role-del:hover { background:#fbf2f2; border-color:var(--danger); }
 .role-add { align-self:flex-start; margin-top:4px; background:transparent; border:1px dashed var(--line); color:var(--govbb-teal-00); font-family:inherit; font-weight:600; font-size:13px; border-radius:var(--govbb-radius); padding:8px 12px; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
 .role-add:hover { border-color:var(--govbb-teal-00); background:var(--govbb-teal-10); }
 .rep-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-.lbl { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; color:var(--navy); }
+.lbl { display:flex; flex-direction:column; gap:6px; font-size:16px; font-weight:700; color:var(--ink); }
 .lbl span i { color:var(--danger); font-style:normal; margin-left:2px; } .lbl.wide { grid-column:1 / -1; }
-.affirm { display:flex; gap:11px; align-items:flex-start; margin:22px 0 6px; font-size:13.5px; color:var(--ink); cursor:pointer; }
+.affirm { display:flex; gap:11px; align-items:flex-start; margin:22px 0 6px; font-size:17px; color:var(--ink); cursor:pointer; }
 .affirm input { margin-top:3px; width:16px;height:16px; accent-color:var(--navy); flex:0 0 auto; }
 .error { display:flex; align-items:center; gap:8px; color:var(--danger); font-size:13.5px; background:#fbeaea; border:1px solid #f0cccc; padding:10px 13px; border-radius:var(--govbb-radius); margin-top:14px; }
 .actions { display:flex; justify-content:flex-end; gap:10px; margin-top:24px; }
@@ -1180,10 +1179,10 @@ textarea { resize:vertical; }
 .btn.ghost { background:var(--surface); border-color:var(--line); color:var(--ink); } .btn.ghost:hover { border-color:var(--muted); }
 .btn.ghost.danger { color:var(--danger); } .btn.ghost.danger:hover { border-color:var(--danger); background:#fbf2f2; }
 .done { text-align:center; padding:50px 20px; }
-.done-mark { color:var(--confirmed); display:flex; justify-content:center; margin-bottom:8px; animation:pop .4s ease; } @keyframes pop { from{transform:scale(.7);opacity:0;} to{transform:scale(1);opacity:1;} }
-.done h2 { font-size:26px; margin-bottom:8px; } .done p { color:var(--muted); max-width:460px; margin:0 auto; } .done-actions { margin-top:26px; }
+.done-mark { display:none; } @keyframes pop { from{transform:scale(.7);opacity:0;} to{transform:scale(1);opacity:1;} }
+.done h2 { font-size:32px; margin-bottom:8px; } .done p { color:var(--muted); font-size:18px; max-width:460px; margin:0 auto; } .done-actions { margin-top:26px; }
 .dash-head { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; }
-.dash-head h2 { font-size:24px; } .dash-head p { color:var(--muted); margin:5px 0 0; font-size:14px; }
+.dash-head h2 { font-size:28px; } .dash-head p { color:var(--muted); margin:6px 0 0; font-size:16px; }
 .dash-tools { display:flex; gap:8px; }
 .progress-wrap { margin:22px 0 18px; }
 .progress-row { display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:7px; }
@@ -1243,7 +1242,7 @@ textarea { resize:vertical; }
 .dash-view { padding-top:18px; }
 .overview-tools { display:flex; justify-content:flex-end; margin-bottom:8px; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
-.review-head p { color:var(--muted); font-size:14px; margin:0; max-width:560px; }
+.review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
 .review-tools { display:flex; align-items:flex-end; gap:9px; }
 .reviewer-lbl { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:var(--navy); }
 .reviewer-lbl input { border:1px solid var(--line); border-radius:var(--govbb-radius); padding:7px 10px; font-family:inherit; font-size:13.5px; outline:0; }
@@ -1251,8 +1250,8 @@ textarea { resize:vertical; }
 .review-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
 .review-card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:16px; }
 .review-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:6px; }
-.review-name { font-weight:600; font-size:15px; }
-.review-sub { font-size:12.5px; color:var(--muted); margin-top:3px; }
+.review-name { font-weight:700; font-size:18px; }
+.review-sub { font-size:14px; color:var(--muted); margin-top:3px; }
 .change-hints { font-size:12.5px; color:var(--updated); font-weight:600; margin:2px 0 4px; text-transform:capitalize; }
 .review-contact { font-size:12.5px; color:var(--muted); margin-top:8px; }
 .audit { margin-top:14px; padding-top:12px; border-top:1px dashed var(--line); }
@@ -1281,7 +1280,7 @@ textarea { resize:vertical; }
 .ps-n { font-family:'Figtree',system-ui,sans-serif; font-size:30px; font-weight:700; line-height:1; color:var(--navy); }
 .ps-n.approved { color:var(--confirmed); } .ps-n.pending { color:var(--updated); }
 .ps-l { font-size:12.5px; color:var(--muted); margin-top:6px; }
-.publish-lead { color:var(--muted); font-size:14px; margin:0 0 16px; }
+.publish-lead { color:var(--muted); font-size:17px; margin:0 0 16px; }
 .publish-lead code, .publish-fallback code, .gh-note code { background:#f5f6f8; border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12.5px; color:var(--ink); }
 .gh-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
 .gh-note { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); margin:12px 0 0; }
@@ -1294,20 +1293,50 @@ textarea { resize:vertical; }
 .publish-fallback ol { margin:10px 0 0; padding-left:20px; } .publish-fallback li { margin:5px 0; }
 .signin-wrap { display:flex; justify-content:center; padding:24px 0; }
 .signin-card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:30px; max-width:420px; width:100%; }
-.signin-ic { width:48px; height:48px; border-radius:var(--radius-md); background:var(--navy); color:var(--gold-soft); display:grid; place-items:center; margin-bottom:14px; }
-.signin-card h2 { font-size:22px; margin-bottom:8px; }
-.signin-card > p { color:var(--muted); font-size:13.5px; margin:0 0 18px; }
+.signin-ic { display:none; }
+.signin-card h2 { font-size:26px; margin-bottom:8px; }
+.signin-card > p { color:var(--muted); font-size:16px; margin:0 0 18px; }
 .signin-card .lbl { margin-bottom:14px; }
 .signin-btn { width:100%; justify-content:center; margin-top:4px; }
 .signin-note { display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--muted); margin:16px 0 0; }
 .signed-as { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--navy); background:var(--govbb-blue-10); border:1px solid var(--line); border-radius:var(--govbb-radius); padding:5px 11px; }
-@media (max-width:620px) {
-  .rep-grid, .stat-grid, .compare, .edit-grid, .gh-grid { grid-template-columns:1fr; } .stat-grid { grid-template-columns:1fr 1fr; }
-  .role-row { grid-template-columns:1fr 110px 34px; }
-  .link-item { grid-template-columns:1fr; }
+/* Long strings (emails, URLs, code) never force horizontal scroll. */
+.vrow-name, .drow-name, .link-name, .review-name, .onfile, .onfile span, .cmp-row, .link-url, .links-base code, .meta, .role-chip { overflow-wrap:anywhere; word-break:break-word; }
+.subtabs { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.tab, .subtab { white-space:nowrap; }
+
+/* ---------- Tablet (≤900px) ---------- */
+@media (max-width:900px) {
+  .compare, .gh-grid, .edit-grid { grid-template-columns:1fr; }
+  .stat-grid { grid-template-columns:1fr 1fr; }
+  .link-item { grid-template-columns:1fr auto; }
+  .dash-head, .review-head { flex-direction:column; align-items:stretch; }
+  .dash-tools, .review-tools { flex-wrap:wrap; }
+  .service-hdr h1 { font-size:clamp(22px,5vw,30px); }
+}
+
+/* ---------- Mobile (≤600px) ---------- */
+@media (max-width:600px) {
+  .root { font-size:17px; }
+  .rep-grid, .stat-grid, .edit-grid, .gh-grid, .link-item { grid-template-columns:1fr; }
+  .role-row { grid-template-columns:1fr; }
+  .role-del { justify-self:start; }
   .publish-summary { flex-direction:column; }
-  .gov-hdr-inner, .status-inner, .gov-banner-inner { padding-left:18px; padding-right:18px; }
-  .service-hdr-inner { padding:22px 18px 0; } .main { padding:24px 18px 60px; } .gov-footer-inner { padding:26px 18px; } .add-row select { max-width:none; flex:1; }
-  .tabs { flex-wrap:wrap; }
+  /* Page furniture padding */
+  .gov-banner-inner, .gov-hdr-inner, .status-inner { padding-left:16px; padding-right:16px; }
+  .service-hdr-inner { padding:20px 16px 0; } .main { padding:22px 16px 56px; } .gov-footer-inner { padding:24px 16px; }
+  .tabs { gap:0; } .tab { padding:11px 12px; font-size:14px; }
+  /* List / detail rows stack the badge under the name */
+  .vrow { flex-wrap:wrap; gap:8px 10px; padding:13px 15px; }
+  .vrow-body { flex:1 1 100%; }
+  .drow-main { flex-wrap:wrap; }
+  .add-row { flex-direction:column; align-items:stretch; } .add-row input, .add-row select { max-width:none; width:100%; }
+  .actions, .review-actions, .publish-actions, .drow-tools, .edit-actions { flex-direction:column; align-items:stretch; }
+  .actions .btn, .review-actions .btn, .publish-actions .btn { justify-content:center; width:100%; }
+  .dash-tools .btn { flex:1; justify-content:center; }
+  .meta, .review-card-head { flex-direction:column; gap:6px; align-items:flex-start; }
+  .audit-time { margin-left:0; }
+  .form-head { gap:10px; }
+  .signin-card { padding:22px; }
 }
 `;
