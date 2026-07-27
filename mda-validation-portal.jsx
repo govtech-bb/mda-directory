@@ -61,7 +61,7 @@ async function sbSave(records) {
   return true;
 }
 // Shared access code for coordinator/reviewer sign-in. Change this to your team's code.
-const ACCESS_CODE = "mda-review-2026";
+const ACCESS_CODE = "20262026";
 const newId = () => "mda_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const R = (r, t) => ({ r, t }); // role helper
 
@@ -388,7 +388,7 @@ export default function App() {
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
   const [reviewer, setReviewer] = useState("");
   const [authed, setAuthed] = useState(false);
-  const [signForm, setSignForm] = useState({ name: "", code: "" });
+  const [signForm, setSignForm] = useState({ name: "Admin", code: "" });
   const [signError, setSignError] = useState("");
   const [gh, setGh] = useState({ repo: "govtech-bb/", branch: "main", path: "data/mda-contacts.json", token: "" });
   const [pub, setPub] = useState({ busy: false, step: "", error: "", url: "" });
@@ -577,7 +577,7 @@ export default function App() {
   const signIn = () => {
     if (!signForm.name.trim()) { setSignError("Please enter your name."); return; }
     if (signForm.code.trim() !== ACCESS_CODE) { setSignError("That access code is not correct."); return; }
-    setReviewer(signForm.name.trim()); setAuthed(true); setSignError(""); setSignForm({ name: "", code: "" });
+    setReviewer(signForm.name.trim()); setAuthed(true); setSignError(""); setSignForm({ name: "Admin", code: "" });
   };
   const signOut = () => { setAuthed(false); setReviewer(""); setDashView("overview"); };
 
