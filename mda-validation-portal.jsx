@@ -29,6 +29,8 @@ const SHARED = true;
 const SUPABASE_URL = "https://odioindeqhrqaeicsfvw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_56RAbq0YtRETE1B4tNzaQA_QFpe5l53"; // publishable (public) key
 const ADMIN_EMAIL_DOMAIN = "govtech.bb";
+// Flip to true once the Google OAuth client is configured in Supabase.
+const GOOGLE_SIGN_IN = false;
 const SESSION_KEY = "mda-validation:admin-session";
 
 // Live admin session ({ access_token, email }) — set on sign-in, restored on load.
@@ -1038,8 +1040,10 @@ export default function App() {
               <p>For the coordinating team. Use your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> account to review submissions and update the official record.</p>
               {signError && <p className="field-err">{signError}</p>}
               {signNotice && <p className="signin-ok">{signNotice}</p>}
-              <button type="button" className="btn google-btn signin-btn" onClick={sbGoogleSignIn}>Sign in with Google</button>
-              <div className="signin-sep"><span>or use email</span></div>
+              {GOOGLE_SIGN_IN && <>
+                <button type="button" className="btn google-btn signin-btn" onClick={sbGoogleSignIn}>Sign in with Google</button>
+                <div className="signin-sep"><span>or use email</span></div>
+              </>}
               <div className="lbl">
                 <label htmlFor="admin-email">Work email</label>
                 <input id="admin-email" type="email" inputMode="email" autoComplete="email" value={signForm.email} onChange={(e) => setSignForm({ ...signForm, email: e.target.value })} placeholder={`name@${ADMIN_EMAIL_DOMAIN}`} onKeyDown={(e) => e.key === "Enter" && signIn()} />
