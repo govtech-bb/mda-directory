@@ -842,8 +842,8 @@ export default function App() {
                   {form.roles.length === 0 && <p className="roles-empty">None on record yet — add any direct lines you'd like listed.</p>}
                   {form.roles.map((row, i) => (
                     <div className="role-row" key={i}>
-                      <input className="role-r" value={row.r} placeholder="Role / office" onChange={(e) => setRole(i, "r", e.target.value)} />
-                      <input className="role-t" value={row.t} placeholder="Telephone" onChange={(e) => setRole(i, "t", e.target.value)} />
+                      <input className="role-r" aria-label={`Role or office, row ${i + 1}`} value={row.r} placeholder="Role / office" onChange={(e) => setRole(i, "r", e.target.value)} />
+                      <input className="role-t" aria-label={`Telephone number, row ${i + 1}`} value={row.t} placeholder="Telephone" onChange={(e) => setRole(i, "t", e.target.value)} />
                       <button className="role-del" onClick={() => delRole(i)} title="Remove">Remove</button>
                     </div>
                   ))}
