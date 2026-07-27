@@ -747,6 +747,12 @@ export default function App() {
         <div className="service-hdr-inner">
           <h1>MDA Contact Information Validation Portal</h1>
           <p>Confirm or update the official contact details and key role phone numbers for your ministry, department or agency.</p>
+          <nav className="tabs">
+            {!linkMode && <>
+              <button className={tab === "validate" ? "tab on" : "tab"} onClick={() => { setTab("validate"); setScreen("list"); }}>Validate information</button>
+              <button className={tab === "dashboard" ? "tab on" : "tab"} onClick={() => setTab("dashboard")}>Coordinator dashboard</button>
+            </>}
+          </nav>
         </div>
       </div>
 
@@ -1204,7 +1210,7 @@ h3 { display:flex; align-items:center; gap:8px; }
 .status-inner { max-width:940px; margin:0 auto; padding:10px 24px; display:flex; align-items:center; gap:11px; font-size:13px; color:var(--muted); }
 .status-tag { background:var(--govbb-teal-00); color:#fff; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; padding:3px 9px; border-radius:var(--govbb-radius); flex:0 0 auto; }
 .service-hdr { background:var(--surface); border-bottom:1px solid var(--line); }
-.service-hdr-inner { max-width:940px; margin:0 auto; padding:26px 24px 26px; }
+.service-hdr-inner { max-width:940px; margin:0 auto; padding:26px 24px 0; }
 .service-hdr h1 { font-size:clamp(22px,3.4vw,30px); line-height:1.15; color:var(--ink); }
 .service-hdr p { margin:9px 0 0; font-size:15px; color:var(--muted); max-width:620px; }
 .tabs { display:flex; gap:4px; margin:18px 0 0; }
@@ -1450,7 +1456,7 @@ textarea { resize:vertical; }
   .publish-summary { flex-direction:column; }
   /* Page furniture padding */
   .gov-banner-inner, .gov-hdr-inner, .status-inner { padding-left:16px; padding-right:16px; }
-  .service-hdr-inner { padding:20px 16px 20px; } .main { padding:22px 16px 56px; } .gov-footer-inner { padding:24px 16px; }
+  .service-hdr-inner { padding:20px 16px 0; } .main { padding:22px 16px 56px; } .gov-footer-inner { padding:24px 16px; }
   .tabs { gap:0; } .tab { padding:11px 12px; font-size:14px; }
   /* List / detail rows stack the badge under the name */
   .vrow { flex-wrap:wrap; gap:8px 10px; padding:13px 15px; }
