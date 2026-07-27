@@ -52,27 +52,61 @@ component.
   component — no build step or CSS framework required.
 - State is entirely text-based — there are no icons.
 
-## Saving changes
+## How data flows
 
-Records are persisted in layers, so the app works in any deployment:
+- **Directory** (`kv` table) — the official contact records. The public key can
+  **read** it; only a signed-in `@govtech.bb` coordinator can **write** it.
+- **Submissions queue** (`submissions` table) — a representative's submission is
+  **appended** here (the public key can insert but not read or overwrite). It
+  never touches the live directory directly.
+- A coordinator signs in, reviews the queue, and **approves** a submission —
+  that's what writes the change into the directory for everyone.
+- **localStorage** is kept as an offline cache of the directory.
 
-1. **Supabase** (shared) — when configured, every browser reads and writes the
-   same records, so a coordinator sees submissions made on any device.
-2. **localStorage** (per-device) — always kept as an offline cache, so changes
-   survive a reload even before a shared database is set up.
-3. A host `window.storage` bridge, if the environment provides one.
+## Locking down the database (row-level security)
 
-### Enable the shared Supabase database
+Run this once in the Supabase **SQL editor**:
 
-1. Create a free project at [supabase.com](https://supabase.com).
-2. In the SQL editor, create the key-value table and policies (the exact SQL
-   is in the comment block at the top of `mda-validation-portal.jsx`).
-3. Paste the project **URL** and **anon/public key** into `SUPABASE_URL` and
-   `SUPABASE_ANON_KEY` near the top of `mda-validation-portal.jsx`.
+```sql
+-- Submissions queue: anyone may add; only govtech.bb admins may read/act.
+create table if not exists submissions (
+  id uuid primary key default gen_random_uuid(),
+  org_id text, org_name text, org_slug text, kind text, ref text,
+  status text not null default 'pending',
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+alter table submissions enable row level security;
+create policy "submissions public insert" on submissions for insert to anon, authenticated with check (true);
+create policy "submissions admin read"   on submissions for select to authenticated using ((auth.jwt() ->> 'email') like '%@govtech.bb');
+create policy "submissions admin update" on submissions for update to authenticated using ((auth.jwt() ->> 'email') like '%@govtech.bb') with check ((auth.jwt() ->> 'email') like '%@govtech.bb');
 
-Until those are filled in, the app runs on localStorage alone. The anon key is
-safe to ship in client code, but tighten the row-level-security policies before
-storing anything sensitive.
+-- Directory: public reads; only govtech.bb admins write.
+drop policy if exists "kv anon write"  on kv;
+drop policy if exists "kv anon update" on kv;
+create policy "kv admin insert" on kv for insert to authenticated with check ((auth.jwt() ->> 'email') like '%@govtech.bb');
+create policy "kv admin update" on kv for update to authenticated using ((auth.jwt() ->> 'email') like '%@govtech.bb') with check ((auth.jwt() ->> 'email') like '%@govtech.bb');
+-- (keep the existing "kv anon read" select policy)
+```
+
+## Admin sign-in (Supabase Auth)
+
+Coordinators sign in with their **@govtech.bb** account. The domain is enforced
+by the RLS policies above (a non-govtech.bb user can authenticate but can't
+read the queue or write the directory).
+
+- **Google (recommended, since the team uses Google Workspace):** in Supabase →
+  Authentication → Providers → **Google**, enable it and paste a Google OAuth
+  client ID + secret (from Google Cloud console; set the consent screen to
+  *Internal* so only govtech.bb accounts can use it, and add
+  `https://<project>.supabase.co/auth/v1/callback` as an authorized redirect
+  URI). The app's "Sign in with Google" button then works.
+- **Email + password:** Authentication → Providers → **Email** (on by default).
+  Coordinators use "Create an account" once, then sign in.
+
+`SUPABASE_URL` and `SUPABASE_ANON_KEY` are set near the top of
+`mda-validation-portal.jsx`. Until the SQL above is run, admin actions won't be
+able to write; until a provider is configured, sign-in won't succeed.
 
 ## Run locally
 

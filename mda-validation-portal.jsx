@@ -13,36 +13,34 @@ const KEY = "mda-validation:records-v7";
 const SHARED = true;
 
 // ---------------------------------------------------------------------------
-// Shared database (Supabase)
+// Shared database + admin auth (Supabase)
 // ---------------------------------------------------------------------------
-// Paste your Supabase project URL and anon (public) key below and every
-// browser reads/writes the same records — a coordinator sees submissions made
-// on any device. Leave them blank to run on localStorage only.
+// Security model:
+//   • The public (publishable) key may READ the directory and ADD a submission.
+//     It CANNOT overwrite the directory or read the submissions queue.
+//   • Coordinators sign in with a @govtech.bb email + password (Supabase Auth).
+//     Only an authenticated @govtech.bb user may read the queue, approve
+//     submissions, and write the directory.
+//   • Enforcement is in the row-level-security policies (domain check
+//     auth.jwt()->>'email' like '%@govtech.bb'), not in this client code.
 //
-// One-time setup in the Supabase SQL editor:
-//
-//   create table if not exists kv (
-//     key        text primary key,
-//     data       jsonb not null,
-//     updated_at timestamptz not null default now()
-//   );
-//   alter table kv enable row level security;
-//   -- Prototype policy: allow the anon key to read and write this one table.
-//   create policy "kv anon read"  on kv for select using (true);
-//   create policy "kv anon write" on kv for insert with check (true);
-//   create policy "kv anon update" on kv for update using (true) with check (true);
-//
-// The anon key is safe to ship in client code; tighten the policies above
-// before this holds anything sensitive.
+// One-time setup in the Supabase SQL editor is in README.md ("Locking down the
+// database"). Also: Authentication → Providers → Email must be enabled.
 const SUPABASE_URL = "https://odioindeqhrqaeicsfvw.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_56RAbq0YtRETE1B4tNzaQA_QFpe5l53"; // publishable (public) key
+const ADMIN_EMAIL_DOMAIN = "govtech.bb";
+const SESSION_KEY = "mda-validation:admin-session";
+
+// Live admin session ({ access_token, email }) — set on sign-in, restored on load.
+let SESSION = null;
+try { const s = window.localStorage.getItem(SESSION_KEY); if (s) SESSION = JSON.parse(s); } catch (e) {}
+const setSession = (s) => { SESSION = s; try { s ? window.localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : window.localStorage.removeItem(SESSION_KEY); } catch (e) {} };
 
 const supabaseReady = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
-const sbHeaders = () => ({
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-});
+const sbHeaders = () => ({ apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" });
+// Authenticated requests carry the coordinator's JWT (falls back to anon).
+const authHeaders = () => SESSION ? { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SESSION.access_token}`, "Content-Type": "application/json" } : sbHeaders();
+
 async function sbLoad() {
   const url = `${SUPABASE_URL}/rest/v1/kv?key=eq.${encodeURIComponent(KEY)}&select=data`;
   const res = await fetch(url, { headers: sbHeaders() });
@@ -50,18 +48,80 @@ async function sbLoad() {
   const rows = await res.json();
   return rows && rows[0] ? rows[0].data : null;
 }
+// Directory write — now requires an authenticated @govtech.bb session (RLS).
 async function sbSave(records) {
   const url = `${SUPABASE_URL}/rest/v1/kv?on_conflict=key`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    headers: { ...authHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify({ key: KEY, data: records, updated_at: new Date().toISOString() }),
   });
   if (!res.ok) throw new Error(`Supabase save ${res.status}`);
   return true;
 }
-// Shared access code for coordinator/reviewer sign-in. Change this to your team's code.
-const ACCESS_CODE = "20262026";
+// Representative submission — append-only, allowed for the public key.
+async function sbSubmit(submission) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
+    method: "POST",
+    headers: { ...sbHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify(submission),
+  });
+  if (!res.ok) throw new Error(`Supabase submit ${res.status}`);
+  return true;
+}
+// Read the pending queue — requires an authenticated @govtech.bb session (RLS).
+async function sbLoadSubmissions() {
+  const url = `${SUPABASE_URL}/rest/v1/submissions?status=eq.pending&select=*&order=created_at.asc`;
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Supabase submissions ${res.status}`);
+  return res.json();
+}
+async function sbSetSubmissionStatus(id, status) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(`Supabase submission update ${res.status}`);
+  return true;
+}
+// Supabase Auth (email + password).
+async function sbSignIn(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Sign-in failed");
+  return { access_token: data.access_token, email: data.user?.email || email };
+}
+async function sbSignUp(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: "POST", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Sign-up failed");
+  // If email confirmation is off, a session is returned immediately.
+  return { access_token: data.access_token || null, email: data.user?.email || email, needsConfirm: !data.access_token };
+}
+// Google OAuth (Supabase). Redirects to Google, then back to this app with the
+// session in the URL hash (handled on load). `hd` hints the govtech.bb domain.
+function sbGoogleSignIn() {
+  const appUrl = window.location.origin + window.location.pathname;
+  const url = `${SUPABASE_URL}/auth/v1/authorize?provider=google`
+    + `&redirect_to=${encodeURIComponent(appUrl)}`
+    + `&hd=${encodeURIComponent(ADMIN_EMAIL_DOMAIN)}`;
+  window.location.href = url;
+}
+// Decode the email claim from a Supabase/Google JWT without a library.
+function jwtEmail(token) {
+  try {
+    const b = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(decodeURIComponent(escape(atob(b))));
+    return json.email || json.user_metadata?.email || null;
+  } catch (e) { return null; }
+}
 const newId = () => "mda_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const R = (r, t) => ({ r, t }); // role helper
 
@@ -386,10 +446,13 @@ export default function App() {
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
-  const [reviewer, setReviewer] = useState("");
-  const [authed, setAuthed] = useState(false);
-  const [signForm, setSignForm] = useState({ name: "Admin", code: "" });
+  const [reviewer, setReviewer] = useState(SESSION?.email || "");
+  const [authed, setAuthed] = useState(!!SESSION);
+  const [signForm, setSignForm] = useState({ email: "", password: "" });
   const [signError, setSignError] = useState("");
+  const [signNotice, setSignNotice] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
+  const [pendingSubs, setPendingSubs] = useState([]);
   const [gh, setGh] = useState({ repo: "govtech-bb/", branch: "main", path: "data/mda-contacts.json", token: "" });
   const [pub, setPub] = useState({ busy: false, step: "", error: "", url: "" });
 
@@ -412,6 +475,30 @@ export default function App() {
     if (formErrors.length && errorSummaryRef.current) errorSummaryRef.current.focus();
   }, [formErrors]);
 
+  // Load the pending review queue whenever a coordinator is signed in.
+  useEffect(() => {
+    if (!authed || !supabaseReady()) { setPendingSubs([]); return; }
+    (async () => { try { setPendingSubs(await sbLoadSubmissions()); } catch (e) { console.warn("Could not load review queue", e); } })();
+  }, [authed]);
+
+  // Handle the Google OAuth redirect callback (tokens arrive in the URL hash).
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    if (!hash.includes("access_token=")) return;
+    const token = new URLSearchParams(hash.replace(/^#/, "")).get("access_token");
+    if (token) {
+      const email = (jwtEmail(token) || "").toLowerCase();
+      if (email.endsWith("@" + ADMIN_EMAIL_DOMAIN)) {
+        setSession({ access_token: token, email });
+        setReviewer(email); setAuthed(true); setTab("dashboard");
+      } else {
+        setTab("dashboard");
+        setSignError(`That Google account isn't a @${ADMIN_EMAIL_DOMAIN} address. Please use your work account.`);
+      }
+    }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+  }, []);
+
   const persist = async (next) => { setRecords(next); await saveRecords(next); };
   const ministries = useMemo(() => records.filter((r) => r.kind === "ministry").sort((a, b) => a.name.localeCompare(b.name)), [records]);
   const deptsOf = (mid) => records.filter((r) => r.parentId === mid).sort((a, b) => a.name.localeCompare(b.name));
@@ -425,16 +512,28 @@ export default function App() {
   const stats = useMemo(() => {
     const total = records.length;
     const approved = records.filter((r) => r.status === "approved").length;
-    const pending = records.filter((r) => r.status === "pending").length;
-    const awaiting = total - approved - pending;
-    const done = approved + pending;
+    const pending = pendingSubs.length;
+    const awaiting = total - approved;
+    const done = approved;
     return { total, approved, pending, awaiting, done, pct: total ? Math.round((done / total) * 100) : 0 };
-  }, [records]);
+  }, [records, pendingSubs]);
+  // Build review-card records from the pending submissions queue, overlaying the
+  // submitted values onto each organisation's current official details.
   const pendingList = useMemo(() => {
-    const out = [];
-    for (const m of ministries) { for (const r of [m, ...deptsOf(m.id)]) if (r.status === "pending") out.push(r); }
-    return out;
-  }, [ministries, records]);
+    return pendingSubs.map((s) => {
+      const rec = records.find((r) => r.id === s.org_id) || {};
+      const p = s.payload || {};
+      return {
+        id: s.org_id, submissionId: s.id, submissionRef: s.ref,
+        name: s.org_name || rec.name, kind: s.kind || rec.kind, parentId: rec.parentId,
+        currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress, roles: rec.roles || [],
+        validatedPhone: p.phone, validatedEmail: p.email, validatedAddress: p.address, validatedRoles: p.roles || [],
+        submissionType: p.submissionType, submittedAt: p.submittedAt,
+        repName: p.repName, repTitle: p.repTitle, repEmail: p.repEmail, notes: p.notes,
+        audit: [{ t: p.submittedAt, kind: "submitted", actor: p.actor, email: p.repEmail, changes: p.changes, ref: s.ref }],
+      };
+    });
+  }, [pendingSubs, records]);
   const approvedList = useMemo(() => records.filter((r) => r.status === "approved"), [records]);
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
@@ -530,56 +629,85 @@ export default function App() {
     else if (!hadRoles && rolesClean.length) changes.push({ field: "Roles", action: "added", to: `${rolesClean.length} added` });
     const actor = `${form.repName.trim()}${form.repTitle.trim() ? ", " + form.repTitle.trim() : ""}`;
     const subRef = "MDA-" + Math.random().toString(36).slice(2, 7).toUpperCase();
-    const entry = { t: new Date().toISOString(), kind: "submitted", actor, email: form.repEmail.trim(), changes, ref: subRef };
-    const next = records.map((r) => r.id === selected.id ? {
-      ...r, status: "pending", submissionType: changed || !hadOnFile ? "updated" : "confirmed",
-      validatedPhone: form.phone.trim(), validatedEmail: form.email.trim(), validatedAddress: form.address.trim(),
-      validatedRoles: rolesClean, repName: form.repName.trim(), repTitle: form.repTitle.trim(),
-      repEmail: form.repEmail.trim(), notes: form.notes.trim(), submittedAt: new Date().toISOString(),
-      submissionRef: subRef, reviewedAt: null, reviewedBy: "", audit: [...(r.audit || []), entry],
-    } : r);
+    // Append to the review queue (does NOT touch the live directory — an admin
+    // approves it later). The payload carries everything the reviewer needs.
+    const submission = {
+      org_id: selected.id, org_name: selected.name, org_slug: slugify(selected.name), kind: selected.kind,
+      ref: subRef, status: "pending",
+      payload: {
+        submissionType: changed || !hadOnFile ? "updated" : "confirmed",
+        actor, repName: form.repName.trim(), repTitle: form.repTitle.trim(), repEmail: form.repEmail.trim(), notes: form.notes.trim(),
+        phone: form.phone.trim(), email: form.email.trim(), address: form.address.trim(), roles: rolesClean,
+        previous: { phone: selected.currentPhone || "", email: selected.currentEmail || "", address: selected.currentAddress || "", roles: selected.roles || [] },
+        changes, submittedAt: new Date().toISOString(),
+      },
+    };
     setLastRef(subRef);
-    await persist(next); setScreen("done");
+    if (supabaseReady()) {
+      try { await sbSubmit(submission); }
+      catch (e) { console.warn("Submission failed to send", e); }
+    } else {
+      try { const k = "mda-validation:submissions"; const arr = JSON.parse(window.localStorage.getItem(k) || "[]"); arr.push(submission); window.localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {}
+    }
+    setScreen("done");
   };
 
   const auditEntry = (kind, actor, changes) => ({ t: new Date().toISOString(), kind, actor: (actor || "").trim(), ...(changes ? { changes } : {}) });
 
-  // Coordinator review actions
-  const approveRecord = async (id, reviewer) => {
-    const next = records.map((r) => r.id === id ? {
-      ...r, status: "approved",
-      currentPhone: r.validatedPhone, currentEmail: r.validatedEmail, currentAddress: r.validatedAddress,
-      roles: (r.validatedRoles && r.validatedRoles.length) ? r.validatedRoles : r.roles,
-      reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
-      audit: [...(r.audit || []), auditEntry("approved", reviewer)],
-    } : r);
-    await persist(next);
+  // Coordinator review actions — operate on the submissions queue.
+  const applyApproval = (r, list) => list.map((x) => x.id === r.id ? {
+    ...x, status: "approved",
+    currentPhone: r.validatedPhone, currentEmail: r.validatedEmail, currentAddress: r.validatedAddress,
+    roles: (r.validatedRoles && r.validatedRoles.length) ? r.validatedRoles : x.roles,
+    reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
+    audit: [...(x.audit || []), auditEntry("approved", reviewer)],
+  } : x);
+  const approveSub = async (r) => {
+    await persist(applyApproval(r, records));
+    try { await sbSetSubmissionStatus(r.submissionId, "approved"); } catch (e) { console.warn("Mark approved failed", e); }
+    setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
-  const rejectRecord = async (id, reviewer) => {
-    const next = records.map((r) => r.id === id ? {
-      ...r, status: "awaiting", reviewedAt: new Date().toISOString(),
-      audit: [...(r.audit || []), auditEntry("returned", reviewer)],
-    } : r);
-    await persist(next);
+  const rejectSub = async (r) => {
+    try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); }
+    setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
-  const approveAll = async (reviewer) => {
+  const approveAllSubs = async () => {
     if (!window.confirm("Approve all pending submissions? Their submitted details become the official record.")) return;
-    const next = records.map((r) => r.status === "pending" ? {
-      ...r, status: "approved",
-      currentPhone: r.validatedPhone, currentEmail: r.validatedEmail, currentAddress: r.validatedAddress,
-      roles: (r.validatedRoles && r.validatedRoles.length) ? r.validatedRoles : r.roles,
-      reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
-      audit: [...(r.audit || []), auditEntry("approved", reviewer)],
-    } : r);
+    let next = records;
+    for (const r of pendingList) next = applyApproval(r, next);
     await persist(next);
+    try { await Promise.all(pendingList.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
+    setPendingSubs([]);
   };
 
-  const signIn = () => {
-    if (!signForm.name.trim()) { setSignError("Please enter your name."); return; }
-    if (signForm.code.trim() !== ACCESS_CODE) { setSignError("That access code is not correct."); return; }
-    setReviewer(signForm.name.trim()); setAuthed(true); setSignError(""); setSignForm({ name: "Admin", code: "" });
+  const validAdminEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.toLowerCase().endsWith("@" + ADMIN_EMAIL_DOMAIN);
+  const signIn = async () => {
+    const email = signForm.email.trim().toLowerCase();
+    setSignNotice("");
+    if (!validAdminEmail(email)) { setSignError(`Use your @${ADMIN_EMAIL_DOMAIN} email address.`); return; }
+    if (!signForm.password) { setSignError("Enter your password."); return; }
+    setSigningIn(true);
+    try {
+      const s = await sbSignIn(email, signForm.password);
+      if (!s.access_token) throw new Error("Sign-in failed");
+      setSession(s); setReviewer(s.email); setAuthed(true); setSignError(""); setSignForm({ email: "", password: "" });
+    } catch (e) { setSignError(e.message || "Sign-in failed"); }
+    setSigningIn(false);
   };
-  const signOut = () => { setAuthed(false); setReviewer(""); setDashView("overview"); };
+  const signUp = async () => {
+    const email = signForm.email.trim().toLowerCase();
+    setSignNotice("");
+    if (!validAdminEmail(email)) { setSignError(`Use your @${ADMIN_EMAIL_DOMAIN} email address.`); return; }
+    if ((signForm.password || "").length < 8) { setSignError("Choose a password of at least 8 characters."); return; }
+    setSigningIn(true);
+    try {
+      const s = await sbSignUp(email, signForm.password);
+      if (s.needsConfirm) { setSignError(""); setSignNotice("Account created. Check your email to confirm it, then sign in."); }
+      else { setSession({ access_token: s.access_token, email: s.email }); setReviewer(s.email); setAuthed(true); setSignError(""); setSignForm({ email: "", password: "" }); }
+    } catch (e) { setSignError(e.message || "Sign-up failed"); }
+    setSigningIn(false);
+  };
+  const signOut = () => { setSession(null); setAuthed(false); setReviewer(""); setDashView("overview"); setPendingSubs([]); };
 
   const addRecord = async () => {
     const name = newName.trim(); if (!name) return;
@@ -906,14 +1034,22 @@ export default function App() {
         ) : !authed ? (
           <section className="fade signin-wrap">
             <div className="signin-card">
-              <div className="signin-ic"><Lock size={22} /></div>
-              <h2>Coordinator sign-in</h2>
-              <p>This area is for the coordinating team — to review submissions and publish approved changes. Please sign in to continue.</p>
-              <label className="lbl"><span>Your name<i>*</i></span><input value={signForm.name} onChange={(e) => setSignForm({ ...signForm, name: e.target.value })} placeholder="Full name" onKeyDown={(e) => e.key === "Enter" && signIn()} /></label>
-              <label className="lbl"><span>Access code<i>*</i></span><input type="password" value={signForm.code} onChange={(e) => setSignForm({ ...signForm, code: e.target.value })} placeholder="Team access code" onKeyDown={(e) => e.key === "Enter" && signIn()} /></label>
-              {signError && <div className="error"><Info size={15} /> {signError}</div>}
-              <button className="btn primary signin-btn" onClick={signIn}><Lock size={16} /> Sign in</button>
-              <p className="signin-note"><Info size={13} /> This is a lightweight gate to keep the review area separate from representatives; it isn't a substitute for account-level security.</p>
+              <h2>Coordinator sign in</h2>
+              <p>For the coordinating team. Use your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> account to review submissions and update the official record.</p>
+              {signError && <p className="field-err">{signError}</p>}
+              {signNotice && <p className="signin-ok">{signNotice}</p>}
+              <button type="button" className="btn google-btn signin-btn" onClick={sbGoogleSignIn}>Sign in with Google</button>
+              <div className="signin-sep"><span>or use email</span></div>
+              <div className="lbl">
+                <label htmlFor="admin-email">Work email</label>
+                <input id="admin-email" type="email" inputMode="email" autoComplete="email" value={signForm.email} onChange={(e) => setSignForm({ ...signForm, email: e.target.value })} placeholder={`name@${ADMIN_EMAIL_DOMAIN}`} onKeyDown={(e) => e.key === "Enter" && signIn()} />
+              </div>
+              <div className="lbl">
+                <label htmlFor="admin-password">Password</label>
+                <input id="admin-password" type="password" autoComplete="current-password" value={signForm.password} onChange={(e) => setSignForm({ ...signForm, password: e.target.value })} placeholder="Your password" onKeyDown={(e) => e.key === "Enter" && signIn()} />
+              </div>
+              <button className="btn primary signin-btn" onClick={signIn} disabled={signingIn}>{signingIn ? "Signing in…" : "Sign in"}</button>
+              <p className="signin-createline"><button type="button" className="linklike" onClick={signUp} disabled={signingIn}>Create an account</button></p>
             </div>
           </section>
         ) : (
@@ -1031,7 +1167,7 @@ export default function App() {
                 {pendingList.length > 0 && (
                   <div className="review-tools">
                     <span className="signed-as"><Users size={14} /> Reviewing as {reviewer}</span>
-                    <button className="btn ghost sm" onClick={() => approveAll(reviewer)}><CheckCircle2 size={14} /> Approve all</button>
+                    <button className="btn ghost sm" onClick={approveAllSubs}>Approve all</button>
                   </div>
                 )}
               </div>
@@ -1059,8 +1195,8 @@ export default function App() {
                         {r.notes && <div className="meta-notes">“{r.notes}”</div>}
                         <AuditTrail entries={r.audit} />
                         <div className="review-actions">
-                          <button className="btn primary sm" onClick={() => approveRecord(r.id, reviewer)}><Check size={15} /> Approve</button>
-                          <button className="btn ghost sm danger" onClick={() => rejectRecord(r.id, reviewer)}><X size={15} /> Send back</button>
+                          <button className="btn primary sm" onClick={() => approveSub(r)}>Approve</button>
+                          <button className="btn ghost sm danger" onClick={() => rejectSub(r)}>Send back</button>
                           <button className="btn ghost sm" onClick={() => { setLinkMode(false); setTab("validate"); openValidation(r); }}><PencilLine size={14} /> Edit corrections</button>
                         </div>
                       </li>
@@ -1430,6 +1566,13 @@ textarea { resize:vertical; }
 .signin-card > p { color:var(--muted); font-size:16px; margin:0 0 18px; }
 .signin-card .lbl { margin-bottom:14px; }
 .signin-btn { width:100%; justify-content:center; margin-top:4px; }
+.signin-ok { color:var(--confirmed); font-weight:600; font-size:15px; margin:0 0 12px; }
+.linklike { background:none; border:0; padding:0; font:inherit; color:var(--govbb-teal-00); font-weight:600; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+.google-btn { background:var(--surface); color:var(--ink); border:2px solid var(--ink); font-weight:600; }
+.google-btn:hover { background:#f5f6f8; }
+.signin-sep { display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--muted); font-size:13px; }
+.signin-sep::before, .signin-sep::after { content:""; flex:1; height:1px; background:var(--line); }
+.signin-createline { text-align:center; margin:14px 0 0; }
 .signin-note { display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--muted); margin:16px 0 0; }
 .signed-as { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--navy); background:var(--govbb-blue-10); border:1px solid var(--line); border-radius:var(--govbb-radius); padding:5px 11px; }
 /* Long strings (emails, URLs, code) never force horizontal scroll. */
