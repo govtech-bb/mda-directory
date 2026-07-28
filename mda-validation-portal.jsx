@@ -98,7 +98,10 @@ async function sbSignIn(email, password) {
   return { access_token: data.access_token, email: data.user?.email || email };
 }
 async function sbSignUp(email, password) {
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+  // After clicking the email confirmation link, Supabase sends the user back to
+  // this app (tokens arrive in the URL hash and are handled on load).
+  const appUrl = window.location.origin + window.location.pathname;
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup?redirect_to=${encodeURIComponent(appUrl)}`, {
     method: "POST", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
@@ -481,11 +484,15 @@ export default function App() {
     (async () => { try { setPendingSubs(await sbLoadSubmissions()); } catch (e) { console.warn("Could not load review queue", e); } })();
   }, [authed]);
 
-  // Handle the Google OAuth redirect callback (tokens arrive in the URL hash).
+  // Handle auth redirects: Google OAuth AND the email-confirmation link both
+  // send the user back here with tokens (or an error) in the URL hash/query.
   useEffect(() => {
-    const hash = window.location.hash || "";
-    if (!hash.includes("access_token=")) return;
-    const token = new URLSearchParams(hash.replace(/^#/, "")).get("access_token");
+    const hp = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+    const sp = new URLSearchParams(window.location.search || "");
+    const token = hp.get("access_token");
+    const err = hp.get("error_description") || hp.get("error") || sp.get("error_description") || sp.get("error");
+    const confirmed = hp.get("type") === "signup" || sp.get("type") === "signup";
+    if (!token && !err && !confirmed) return;
     if (token) {
       const email = (jwtEmail(token) || "").toLowerCase();
       if (email.endsWith("@" + ADMIN_EMAIL_DOMAIN)) {
@@ -493,10 +500,16 @@ export default function App() {
         setReviewer(email); setAuthed(true); setTab("dashboard");
       } else {
         setTab("dashboard");
-        setSignError(`That Google account isn't a @${ADMIN_EMAIL_DOMAIN} address. Please use your work account.`);
+        setSignError(`That account isn't a @${ADMIN_EMAIL_DOMAIN} address. Please use your work account.`);
       }
+    } else if (err) {
+      setTab("dashboard");
+      setSignError(decodeURIComponent(err.replace(/\+/g, " ")));
+    } else if (confirmed) {
+      setTab("dashboard");
+      setSignNotice("Email confirmed — you can sign in now.");
     }
-    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (e) {}
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
   }, []);
 
   const persist = async (next) => { setRecords(next); await saveRecords(next); };
