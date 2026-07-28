@@ -518,8 +518,9 @@ export default function App() {
   const selected = useMemo(() => records.find((r) => r.id === selectedId) || null, [records, selectedId]);
   const parentOf = (rec) => (rec && rec.parentId ? records.find((r) => r.id === rec.parentId) : null);
   const rolesShown = (r) => (r.validatedRoles && r.validatedRoles.length ? r.validatedRoles : (r.roles || []));
+  const descendantsOf = (id) => deptsOf(id).flatMap((c) => [c, ...descendantsOf(c.id)]);
   const groupStat = (mid) => {
-    const rows = [records.find((r) => r.id === mid), ...deptsOf(mid)].filter(Boolean);
+    const rows = [records.find((r) => r.id === mid), ...descendantsOf(mid)].filter(Boolean);
     return { total: rows.length, done: rows.filter((r) => r.status !== "awaiting").length };
   };
   const stats = useMemo(() => {
@@ -553,7 +554,8 @@ export default function App() {
   const slugMap = useMemo(() => {
     const byId = {}; const bySlug = {}; const used = {};
     for (const m of ministries) {
-      const rows = [m, ...deptsOf(m.id)];
+      const rows = [m];
+      for (const d of deptsOf(m.id)) { rows.push(d); for (const f of deptsOf(d.id)) rows.push(f); }
       for (const r of rows) {
         let base = slugify(r.name) || "org";
         let s = base, n = 2;
@@ -725,13 +727,21 @@ export default function App() {
   const addRecord = async () => {
     const name = newName.trim(); if (!name) return;
     const base = { id: newId(), name, currentPhone: "", currentEmail: "", currentAddress: "", roles: [], ...valDefaults() };
-    const rec = newParent ? { ...base, kind: "department", parentId: newParent } : { ...base, kind: "ministry", parentId: null };
+    const parent = newParent ? records.find((r) => r.id === newParent) : null;
+    const rec = !parent ? { ...base, kind: "ministry", parentId: null }
+      : parent.kind === "ministry" ? { ...base, kind: "department", parentId: parent.id }
+      : { ...base, kind: "facility", parentId: parent.id };
     await persist([...records, rec]); setNewName("");
   };
   const removeRecord = async (id) => {
-    const isMinistry = records.find((r) => r.id === id)?.kind === "ministry";
-    if (!window.confirm(isMinistry ? "Remove this ministry and all of its departments?" : "Remove this organisation?")) return;
-    await persist(records.filter((r) => r.id !== id && r.parentId !== id));
+    const rec = records.find((r) => r.id === id);
+    const kids = descendantsOf(id);
+    const msg = kids.length
+      ? `Remove "${rec ? rec.name : "this"}" and everything under it (${kids.length} sub-entr${kids.length === 1 ? "y" : "ies"})?`
+      : "Remove this organisation?";
+    if (!window.confirm(msg)) return;
+    const removeIds = new Set([id, ...kids.map((k) => k.id)]);
+    await persist(records.filter((r) => !removeIds.has(r.id)));
     if (rowOpen === id) setRowOpen(null);
   };
   const startEdit = (rec) => { setEditId(rec.id); setEditFields({ name: rec.name, currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress }); };
@@ -771,7 +781,7 @@ export default function App() {
   };
   const orderedRecords = useMemo(() => {
     const out = [];
-    for (const m of ministries) { out.push(m); for (const d of deptsOf(m.id)) out.push(d); }
+    for (const m of ministries) { out.push(m); for (const d of deptsOf(m.id)) { out.push(d); for (const f of deptsOf(d.id)) out.push(f); } }
     return out;
   }, [ministries, records]);
   const exportLinksCsv = () => {
@@ -797,6 +807,10 @@ export default function App() {
       departments: deptsOf(m.id).map((d) => ({
         name: d.name, telephone: d.currentPhone, email: d.currentEmail, address: d.currentAddress,
         roles: (d.roles || []).map((x) => ({ role: x.r, telephone: x.t })),
+        facilities: deptsOf(d.id).map((f) => ({
+          name: f.name, telephone: f.currentPhone, email: f.currentEmail, address: f.currentAddress,
+          roles: (f.roles || []).map((x) => ({ role: x.r, telephone: x.t })),
+        })),
       })),
     })),
   });
@@ -808,13 +822,21 @@ export default function App() {
 
   const q = search.trim().toLowerCase();
   const visibleGroups = useMemo(() => ministries.map((m) => {
-    const depts = deptsOf(m.id);
-    const ministryMatches = !q || m.name.toLowerCase().includes(q);
-    let showDepts, showMinistryRow, show;
-    if (!q) { showDepts = depts; showMinistryRow = true; show = true; }
-    else if (ministryMatches) { showDepts = depts; showMinistryRow = true; show = true; }
-    else { showDepts = depts.filter((d) => d.name.toLowerCase().includes(q)); showMinistryRow = false; show = showDepts.length > 0; }
-    return { ministry: m, depts: showDepts, showMinistryRow, show };
+    const matches = (r) => r.name.toLowerCase().includes(q);
+    const ministryMatches = matches(m);
+    const deptEntries = [];
+    for (const d of deptsOf(m.id)) {
+      const facs = deptsOf(d.id);
+      if (!q || ministryMatches || matches(d)) {
+        deptEntries.push({ dept: d, facilities: facs });
+      } else {
+        const fm = facs.filter(matches);
+        if (fm.length) deptEntries.push({ dept: d, facilities: fm });
+      }
+    }
+    const showMinistryRow = !q || ministryMatches;
+    const show = !q || ministryMatches || deptEntries.length > 0;
+    return { ministry: m, depts: deptEntries, showMinistryRow, show };
   }).filter((g) => g.show), [ministries, records, q]);
 
   return (
@@ -882,13 +904,37 @@ export default function App() {
                                 <StatusBadge status={g.ministry.status} /><ChevronRight size={16} className="vrow-go" />
                               </li>
                             )}
-                            {g.depts.map((d) => (
-                              <li key={d.id} className="vrow dept" role="button" tabIndex={0} aria-label={`Validate ${d.name}`} onKeyDown={onRowKey(() => openValidation(d))} onClick={() => openValidation(d)}>
-                                <CornerDownRight size={15} className="dept-ic" />
-                                <div className="vrow-body"><span className="vrow-name">{d.name}</span>{(d.currentPhone || d.currentEmail) ? null : <span className="needstag">Needs details</span>}</div>
-                                <StatusBadge status={d.status} /><ChevronRight size={16} className="vrow-go" />
-                              </li>
-                            ))}
+                            {g.depts.map(({ dept: d, facilities: facs }) => {
+                              if (facs.length === 0) {
+                                return (
+                                  <li key={d.id} className="vrow dept" role="button" tabIndex={0} aria-label={`Validate ${d.name}`} onKeyDown={onRowKey(() => openValidation(d))} onClick={() => openValidation(d)}>
+                                    <div className="vrow-body"><span className="vrow-name">{d.name}</span>{(d.currentPhone || d.currentEmail) ? null : <span className="needstag">Needs details</span>}</div>
+                                    <StatusBadge status={d.status} /><ChevronRight size={16} className="vrow-go" />
+                                  </li>
+                                );
+                              }
+                              const dOpen = !!q || openGroups[d.id];
+                              return (
+                                <React.Fragment key={d.id}>
+                                  <li className="vrow dept subgroup" role="button" tabIndex={0} aria-expanded={dOpen} aria-label={`${dOpen ? "Collapse" : "Expand"} ${d.name}, ${facs.length} facilities`} onKeyDown={onRowKey(() => setOpenGroups((o) => ({ ...o, [d.id]: !o[d.id] })))} onClick={() => setOpenGroups((o) => ({ ...o, [d.id]: !o[d.id] }))}>
+                                    <div className="vrow-body"><span className="vrow-name">{d.name}</span><span className="kindtag">{facs.length} {facs.length === 1 ? "facility" : "facilities"} — tap to open</span></div>
+                                    <StatusBadge status={d.status} />
+                                  </li>
+                                  {dOpen && (
+                                    <li className="vrow facility" role="button" tabIndex={0} aria-label={`Validate ${d.name} main office`} onKeyDown={onRowKey(() => openValidation(d))} onClick={() => openValidation(d)}>
+                                      <div className="vrow-body"><span className="vrow-name">{d.name} — main office</span></div>
+                                      <StatusBadge status={d.status} /><ChevronRight size={16} className="vrow-go" />
+                                    </li>
+                                  )}
+                                  {dOpen && facs.map((f) => (
+                                    <li key={f.id} className="vrow facility" role="button" tabIndex={0} aria-label={`Validate ${f.name}`} onKeyDown={onRowKey(() => openValidation(f))} onClick={() => openValidation(f)}>
+                                      <div className="vrow-body"><span className="vrow-name">{f.name}</span>{(f.currentPhone || f.currentEmail) ? null : <span className="needstag">Needs details</span>}</div>
+                                      <StatusBadge status={f.status} /><ChevronRight size={16} className="vrow-go" />
+                                    </li>
+                                  ))}
+                                </React.Fragment>
+                              );
+                            })}
                           </ul>
                         )}
                       </li>
@@ -905,7 +951,7 @@ export default function App() {
               <div className="form-head">
                 <div><h2 ref={formHeadingRef} tabIndex={-1}>{selected.name}</h2>
                   <div className="form-sub">
-                    {selected.kind === "ministry" ? <span className="kindtag">Ministry — head office</span> : <span className="kindtag">Department under {parentOf(selected)?.name}</span>}
+                    {selected.kind === "ministry" ? <span className="kindtag">Ministry — head office</span> : selected.kind === "facility" ? <span className="kindtag">Facility under {parentOf(selected)?.name}</span> : <span className="kindtag">Department under {parentOf(selected)?.name}</span>}
                     <StatusBadge status={selected.status} />
                   </div>
                 </div>
@@ -1066,13 +1112,21 @@ export default function App() {
             <div className="progress-wrap"><div className="progress-row"><span>{stats.done} of {stats.total} responded</span><span>{stats.pct}%</span></div><div className="progress"><div className="progress-fill" style={{ width: `${stats.pct}%` }} /></div></div>
             <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
             <div className="add-row">
-              <input placeholder="Add a ministry or department name…" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecord()} />
-              <select value={newParent} onChange={(e) => setNewParent(e.target.value)}><option value="">As a ministry</option>{ministries.map((m) => <option key={m.id} value={m.id}>Under: {m.name}</option>)}</select>
+              <input placeholder="Add a ministry, body or facility name…" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecord()} />
+              <select value={newParent} onChange={(e) => setNewParent(e.target.value)}>
+                <option value="">As a ministry (top level)</option>
+                {ministries.flatMap((m) => [
+                  <option key={m.id} value={m.id}>Under: {m.name}</option>,
+                  ...deptsOf(m.id).map((d) => <option key={d.id} value={d.id}>— under {m.name} › {d.name}</option>),
+                ])}
+              </select>
               <button className="btn primary sm" onClick={addRecord}><Plus size={15} /> Add</button>
             </div>
             <div className="rows">
               {ministries.map((m) => {
-                const gs = groupStat(m.id); const open = !!dashOpen[m.id]; const rows = [m, ...deptsOf(m.id)];
+                const gs = groupStat(m.id); const open = !!dashOpen[m.id];
+                const rows = [{ rec: m, level: 0 }];
+                for (const d of deptsOf(m.id)) { rows.push({ rec: d, level: 1 }); for (const f of deptsOf(d.id)) rows.push({ rec: f, level: 2 }); }
                 return (
                   <div key={m.id} className="dgroup">
                     <button className="dgroup-head" onClick={() => setDashOpen((o) => ({ ...o, [m.id]: !o[m.id] }))}>
@@ -1080,10 +1134,10 @@ export default function App() {
                     </button>
                     {open && (
                       <div className="dgroup-body">
-                        {rows.map((r) => (
-                          <div key={r.id} className={`drow${r.kind === "department" ? " is-dept" : ""}`}>
+                        {rows.map(({ rec: r, level }) => (
+                          <div key={r.id} className={`drow lvl-${level}`}>
                             <div className="drow-main" onClick={() => setRowOpen(rowOpen === r.id ? null : r.id)}>
-                              <div className="drow-name">{r.kind === "department" ? <CornerDownRight size={14} className="dept-ic" /> : <span className="hometag">Head office</span>}<span>{r.name}</span></div>
+                              <div className="drow-name">{level === 0 ? <span className="hometag">Head office</span> : null}<span>{r.name}</span></div>
                               <StatusBadge status={r.status} />
                             </div>
                             {rowOpen === r.id && (
@@ -1146,7 +1200,7 @@ export default function App() {
                     return (
                       <li key={r.id} className="review-card">
                         <div className="review-card-head">
-                          <div><div className="review-name">{r.name}</div><div className="review-sub">{parent ? `Department under ${parent}` : "Ministry — head office"} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : ""}</div></div>
+                          <div><div className="review-name">{r.name}</div><div className="review-sub">{r.kind === "ministry" ? "Ministry — head office" : r.kind === "facility" ? `Facility under ${parent || ""}` : `Department under ${parent || ""}`} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : ""}</div></div>
                           <span className={`badge badge-${r.submissionType === "updated" ? "updated" : "confirmed"}`}>{r.submissionType === "updated" ? <><FileEdit size={13} /> Changes proposed</> : <><Check size={13} /> Confirmed unchanged</>}</span>
                         </div>
                         <div className="compare">
@@ -1317,6 +1371,10 @@ h3 { display:flex; align-items:center; gap:8px; }
 .rowlist { list-style:none; margin:0; padding:0 0 6px; border-top:1px solid var(--line); }
 .vrow { display:flex; align-items:center; gap:11px; padding:12px 17px 12px 20px; cursor:pointer; transition:.14s; border-bottom:1px solid #eef0f3; }
 .vrow:last-child { border-bottom:0; } .vrow:hover { background:#f5f6f8; } .vrow.ministry { background:#f5f6f8; }
+.vrow.dept.subgroup { background:#f8f9fb; } .vrow.dept.subgroup .kindtag { color:var(--govbb-teal-00); text-transform:none; letter-spacing:0; font-weight:600; }
+.vrow.facility { padding-left:44px; }
+.vrow.facility::before { content:""; position:absolute; left:26px; top:0; bottom:0; width:2px; background:var(--line); }
+.vrow.facility { position:relative; }
 .dept-ic { color:var(--gold); flex:0 0 auto; }
 .vrow-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
 .vrow-name { font-weight:500; font-size:14.5px; }
@@ -1405,7 +1463,7 @@ textarea { resize:vertical; }
 .dgroup-head:hover { background:#f5f6f8; } .dgroup-head svg:first-child { color:var(--muted); transition:transform .18s; } .dgroup-head svg:nth-child(2){ color:var(--navy); }
 .dgroup-name { flex:1; font-weight:600; font-size:14.5px; }
 .dgroup-body { border-top:1px solid var(--line); }
-.drow { border-bottom:1px solid #eef0f3; } .drow:last-child { border-bottom:0; } .drow.is-dept { background:#f8f9fb; }
+.drow { border-bottom:1px solid #eef0f3; } .drow:last-child { border-bottom:0; } .drow.lvl-1 { background:#f8f9fb; } .drow.lvl-1 .drow-main { padding-left:34px; } .drow.lvl-2 .drow-main { padding-left:52px; background:#fbfcfd; }
 .drow-main { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 16px 12px 20px; cursor:pointer; }
 .drow-main:hover { background:#f5f6f8; }
 .drow-name { display:flex; align-items:center; gap:9px; font-weight:500; font-size:14px; color:var(--ink); }
