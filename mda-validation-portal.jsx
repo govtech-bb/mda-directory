@@ -435,9 +435,14 @@ export default function App() {
   const [affirm, setAffirm] = useState(false);
   const [formErrors, setFormErrors] = useState([]);
   const [lastRef, setLastRef] = useState("");
+  const [lastSubmittedName, setLastSubmittedName] = useState("");
+  const [proposeCtx, setProposeCtx] = useState(null); // { parentId, parentName, kind }
+  const [proposeForm, setProposeForm] = useState({ name: "", repName: "", repEmail: "" });
+  const [proposeErrors, setProposeErrors] = useState([]);
   const errorSummaryRef = useRef(null);
   const formHeadingRef = useRef(null);
   const errOf = (id) => formErrors.find((e) => e.id === id)?.msg;
+  const propErr = (id) => proposeErrors.find((e) => e.id === id)?.msg;
   const onRowKey = (fn) => (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } };
   const [dashOpen, setDashOpen] = useState({});
   const [rowOpen, setRowOpen] = useState(null);
@@ -470,13 +475,13 @@ export default function App() {
 
   // Move keyboard/screen-reader focus to the form heading when a form opens.
   useEffect(() => {
-    if (screen === "form" && formHeadingRef.current) formHeadingRef.current.focus();
-  }, [screen, selectedId]);
+    if ((screen === "form" || screen === "propose") && formHeadingRef.current) formHeadingRef.current.focus();
+  }, [screen, selectedId, proposeCtx]);
 
-  // Move focus to the error summary when validation fails.
+  // Move focus to the error summary when validation/proposal fails.
   useEffect(() => {
-    if (formErrors.length && errorSummaryRef.current) errorSummaryRef.current.focus();
-  }, [formErrors]);
+    if ((formErrors.length || proposeErrors.length) && errorSummaryRef.current) errorSummaryRef.current.focus();
+  }, [formErrors, proposeErrors]);
 
   // Load the pending review queue whenever a coordinator is signed in.
   useEffect(() => {
@@ -535,8 +540,18 @@ export default function App() {
   // submitted values onto each organisation's current official details.
   const pendingList = useMemo(() => {
     return pendingSubs.map((s) => {
-      const rec = records.find((r) => r.id === s.org_id) || {};
       const p = s.payload || {};
+      if (p.type === "new") {
+        return {
+          isNew: true, submissionId: s.id, submissionRef: s.ref,
+          proposedName: p.proposedName || s.org_name, proposedKind: p.proposedKind || s.kind || "department",
+          parentId: p.parentId, parentName: p.parentName,
+          name: p.proposedName || s.org_name, submittedAt: p.submittedAt,
+          repName: p.repName, repEmail: p.repEmail, notes: p.notes,
+          audit: [{ t: p.submittedAt, kind: "submitted", actor: p.repName, email: p.repEmail, ref: s.ref }],
+        };
+      }
+      const rec = records.find((r) => r.id === s.org_id) || {};
       return {
         id: s.org_id, submissionId: s.id, submissionRef: s.ref,
         name: s.org_name || rec.name, kind: s.kind || rec.kind, parentId: rec.parentId,
@@ -602,6 +617,43 @@ export default function App() {
   const addRole = () => setForm((f) => ({ ...f, roles: [...f.roles, { r: "", t: "" }] }));
   const delRole = (i) => setForm((f) => ({ ...f, roles: f.roles.filter((_, idx) => idx !== i) }));
 
+  // A rep proposing a sub-component that's missing from the directory. Because
+  // the directory is read-only to the public, this goes into the review queue
+  // as a "new" submission; a coordinator approves it to create the record.
+  const openPropose = (parent, kind) => {
+    setProposeCtx({ parentId: parent.id, parentName: parent.name, kind });
+    setProposeForm({ name: "", repName: "", repEmail: "" });
+    setProposeErrors([]);
+    setScreen("propose");
+  };
+  const submitProposal = async () => {
+    if (!proposeCtx) return;
+    const noun = proposeCtx.kind === "facility" ? "facility or office" : "department or agency";
+    const errs = [];
+    if (!proposeForm.name.trim()) errs.push({ id: "prop-name", msg: `Enter the name of the ${noun}` });
+    if (!proposeForm.repName.trim()) errs.push({ id: "prop-repname", msg: "Enter your name" });
+    if (!proposeForm.repEmail.trim()) errs.push({ id: "prop-email", msg: "Enter your work email address" });
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(proposeForm.repEmail.trim())) errs.push({ id: "prop-email", msg: "Enter an email address in the correct format, like name@agency.gov.bb" });
+    if (errs.length) { setProposeErrors(errs); return; }
+    setProposeErrors([]);
+    const name = proposeForm.name.trim();
+    const subRef = "MDA-" + Math.random().toString(36).slice(2, 7).toUpperCase();
+    const submission = {
+      org_id: null, org_name: name, org_slug: slugify(name), kind: proposeCtx.kind,
+      ref: subRef, status: "pending",
+      payload: {
+        type: "new", proposedName: name, proposedKind: proposeCtx.kind,
+        parentId: proposeCtx.parentId, parentName: proposeCtx.parentName,
+        repName: proposeForm.repName.trim(), repEmail: proposeForm.repEmail.trim(),
+        submittedAt: new Date().toISOString(),
+      },
+    };
+    setLastRef(subRef); setLastSubmittedName(name);
+    if (supabaseReady()) { try { await sbSubmit(submission); } catch (e) { console.warn("Proposal failed to send", e); } }
+    else { try { const k = "mda-validation:submissions"; const arr = JSON.parse(window.localStorage.getItem(k) || "[]"); arr.push(submission); window.localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {} }
+    setScreen("done");
+  };
+
   const submitValidation = async () => {
     if (!selected || !form) return;
     const rolesClean = form.roles.map((x) => ({ r: (x.r || "").trim(), t: (x.t || "").trim() })).filter((x) => x.r || x.t);
@@ -657,7 +709,7 @@ export default function App() {
         changes, submittedAt: new Date().toISOString(),
       },
     };
-    setLastRef(subRef);
+    setLastRef(subRef); setLastSubmittedName(selected.name);
     if (supabaseReady()) {
       try { await sbSubmit(submission); }
       catch (e) { console.warn("Submission failed to send", e); }
@@ -677,8 +729,14 @@ export default function App() {
     reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
     audit: [...(x.audit || []), auditEntry("approved", reviewer)],
   } : x);
+  // Turn an approved "new" proposal into a real (blank, awaiting) record.
+  const buildNewRecord = (r) => ({
+    id: newId(), kind: r.proposedKind || "department", name: r.proposedName, parentId: r.parentId,
+    currentPhone: "", currentEmail: "", currentAddress: "", roles: [], ...valDefaults(),
+    audit: [auditEntry("submitted", r.repName), auditEntry("approved", reviewer)],
+  });
   const approveSub = async (r) => {
-    await persist(applyApproval(r, records));
+    await persist(r.isNew ? [...records, buildNewRecord(r)] : applyApproval(r, records));
     try { await sbSetSubmissionStatus(r.submissionId, "approved"); } catch (e) { console.warn("Mark approved failed", e); }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
@@ -689,7 +747,7 @@ export default function App() {
   const approveAllSubs = async () => {
     if (!window.confirm("Approve all pending submissions? Their submitted details become the official record.")) return;
     let next = records;
-    for (const r of pendingList) next = applyApproval(r, next);
+    for (const r of pendingList) next = r.isNew ? [...next, buildNewRecord(r)] : applyApproval(r, next);
     await persist(next);
     try { await Promise.all(pendingList.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
     setPendingSubs([]);
@@ -932,9 +990,17 @@ export default function App() {
                                       <StatusBadge status={f.status} /><ChevronRight size={16} className="vrow-go" />
                                     </li>
                                   ))}
+                                  {dOpen && (
+                                    <li className="vrow facility addmissing" role="button" tabIndex={0} aria-label={`Add a missing facility under ${d.name}`} onKeyDown={onRowKey(() => openPropose(d, "facility"))} onClick={() => openPropose(d, "facility")}>
+                                      <div className="vrow-body"><span className="addmissing-text">+ Something missing? Add a facility under {d.name}</span></div>
+                                    </li>
+                                  )}
                                 </React.Fragment>
                               );
                             })}
+                            <li className="vrow addmissing" role="button" tabIndex={0} aria-label={`Add a missing department or agency under ${g.ministry.name}`} onKeyDown={onRowKey(() => openPropose(g.ministry, "department"))} onClick={() => openPropose(g.ministry, "department")}>
+                              <div className="vrow-body"><span className="addmissing-text">+ Can't find your department or agency? Add it</span></div>
+                            </li>
                           </ul>
                         )}
                       </li>
@@ -1029,17 +1095,53 @@ export default function App() {
               </div>
               <div className="actions">{!linkMode && <button className="btn ghost" onClick={() => setScreen("list")}>Cancel</button>}<button className="btn primary" onClick={submitValidation}>Submit validation</button></div>
             </section>
-          ) : screen === "done" && selected ? (
+          ) : screen === "propose" && proposeCtx ? (
+            <section className="fade form-wrap">
+              <button className="back" onClick={() => setScreen("list")}>All organisations</button>
+              <div className="form-head">
+                <div><h2 ref={formHeadingRef} tabIndex={-1}>Add a missing {proposeCtx.kind === "facility" ? "facility or office" : "department or agency"}</h2>
+                  <div className="form-sub"><span className="kindtag">Under {proposeCtx.parentName}</span></div>
+                </div>
+              </div>
+              {proposeErrors.length > 0 && (
+                <div className="error-summary" role="alert" tabIndex={-1} ref={errorSummaryRef} aria-labelledby="propose-error-title">
+                  <h2 className="error-summary-title" id="propose-error-title">There is a problem</h2>
+                  <ul className="error-summary-list">
+                    {proposeErrors.map((e) => <li key={e.id}><a href={`#${e.id}`} onClick={(ev) => { ev.preventDefault(); const el = document.getElementById(e.id); if (el) { el.scrollIntoView({ block: "center" }); el.focus(); } }}>{e.msg}</a></li>)}
+                  </ul>
+                </div>
+              )}
+              <p className="form-lead">If a {proposeCtx.kind === "facility" ? "facility or office" : "department or agency"} under {proposeCtx.parentName} is missing, add it here. It's sent to the GovTech Barbados team to review and add to the directory.</p>
+              <div className="rep-grid">
+                <div className="lbl wide">
+                  <label htmlFor="prop-name">Name of the {proposeCtx.kind === "facility" ? "facility or office" : "department or agency"}</label>
+                  {propErr("prop-name") && <p className="field-err" id="prop-name-error"><span className="sr-only">Error: </span>{propErr("prop-name")}</p>}
+                  <input id="prop-name" value={proposeForm.name} aria-invalid={propErr("prop-name") ? true : undefined} onChange={(e) => setProposeForm({ ...proposeForm, name: e.target.value })} placeholder="Full official name" />
+                </div>
+                <div className="lbl">
+                  <label htmlFor="prop-repname">Your name</label>
+                  {propErr("prop-repname") && <p className="field-err" id="prop-repname-error"><span className="sr-only">Error: </span>{propErr("prop-repname")}</p>}
+                  <input id="prop-repname" autoComplete="name" value={proposeForm.repName} aria-invalid={propErr("prop-repname") ? true : undefined} onChange={(e) => setProposeForm({ ...proposeForm, repName: e.target.value })} placeholder="Full name" />
+                </div>
+                <div className="lbl">
+                  <label htmlFor="prop-email">Your work email</label>
+                  {propErr("prop-email") && <p className="field-err" id="prop-email-error"><span className="sr-only">Error: </span>{propErr("prop-email")}</p>}
+                  <input id="prop-email" type="email" inputMode="email" autoComplete="email" value={proposeForm.repEmail} aria-invalid={propErr("prop-email") ? true : undefined} onChange={(e) => setProposeForm({ ...proposeForm, repEmail: e.target.value })} placeholder="name@agency.gov.bb" />
+                </div>
+              </div>
+              <div className="actions"><button className="btn ghost" onClick={() => setScreen("list")}>Cancel</button><button className="btn primary" onClick={submitProposal}>Send for review</button></div>
+            </section>
+          ) : screen === "done" ? (
             <section className="fade done">
               <div className="confirm-panel">
                 <h2 ref={formHeadingRef} tabIndex={-1}>Submitted for review</h2>
                 {lastRef && <p className="confirm-ref">Your reference<br /><strong>{lastRef}</strong></p>}
               </div>
-              <p>Thank you. The details for <strong>{selected.name}</strong> have been submitted and are now <strong>pending review</strong> by the GovTech Barbados team before the public record is updated.</p>
-              <p className="done-next">Please keep your reference number in case you need to follow up. We may email you if we have a question about your update.</p>
+              <p>Thank you. Your submission for <strong>{lastSubmittedName}</strong> is now <strong>pending review</strong> by the GovTech Barbados team before the directory is updated.</p>
+              <p className="done-next">Please keep your reference number in case you need to follow up. We may email you if we have a question.</p>
               <div className="done-actions">{linkMode
                 ? <p className="done-close">You may now close this page.</p>
-                : <button className="btn primary" onClick={() => { setScreen("list"); setSearch(""); }}>Validate another organisation</button>}</div>
+                : <button className="btn primary" onClick={() => { setScreen("list"); setSearch(""); }}>Back to all organisations</button>}</div>
             </section>
           ) : null
         ) : !authed ? (
@@ -1194,11 +1296,28 @@ export default function App() {
               {pendingList.length === 0 ? <div className="empty">When representatives submit their details, they'll appear here for review.</div> : (
                 <ul className="review-list">
                   {pendingList.map((r) => {
+                    if (r.isNew) {
+                      return (
+                        <li key={r.submissionId} className="review-card">
+                          <div className="review-card-head">
+                            <div><div className="review-name">{r.proposedName}</div><div className="review-sub">Proposed new {r.proposedKind === "facility" ? "facility or office" : "department or agency"} under {r.parentName} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}` : ""}</div></div>
+                            <span className="badge badge-updated">New — to add</span>
+                          </div>
+                          {r.repEmail && <div className="review-contact">Reply-to: {r.repEmail}</div>}
+                          {r.notes && <div className="meta-notes">“{r.notes}”</div>}
+                          <AuditTrail entries={r.audit} />
+                          <div className="review-actions">
+                            <button className="btn primary sm" onClick={() => approveSub(r)}>Approve &amp; add</button>
+                            <button className="btn ghost sm danger" onClick={() => rejectSub(r)}>Reject</button>
+                          </div>
+                        </li>
+                      );
+                    }
                     const parent = r.parentId ? records.find((p) => p.id === r.parentId)?.name : null;
                     const diff = (a, b) => (a || "").trim() !== (b || "").trim();
                     const changes = [diff(r.currentPhone, r.validatedPhone) && "telephone", diff(r.currentEmail, r.validatedEmail) && "email", diff(r.currentAddress, r.validatedAddress) && "address"].filter(Boolean);
                     return (
-                      <li key={r.id} className="review-card">
+                      <li key={r.submissionId} className="review-card">
                         <div className="review-card-head">
                           <div><div className="review-name">{r.name}</div><div className="review-sub">{r.kind === "ministry" ? "Ministry — head office" : r.kind === "facility" ? `Facility under ${parent || ""}` : `Department under ${parent || ""}`} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : ""}</div></div>
                           <span className={`badge badge-${r.submissionType === "updated" ? "updated" : "confirmed"}`}>{r.submissionType === "updated" ? <><FileEdit size={13} /> Changes proposed</> : <><Check size={13} /> Confirmed unchanged</>}</span>
@@ -1375,6 +1494,8 @@ h3 { display:flex; align-items:center; gap:8px; }
 .vrow.facility { padding-left:44px; }
 .vrow.facility::before { content:""; position:absolute; left:26px; top:0; bottom:0; width:2px; background:var(--line); }
 .vrow.facility { position:relative; }
+.vrow.addmissing { cursor:pointer; } .vrow.addmissing:hover { background:var(--govbb-teal-10); }
+.addmissing-text { color:var(--govbb-teal-00); font-weight:600; font-size:14px; }
 .dept-ic { color:var(--gold); flex:0 0 auto; }
 .vrow-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
 .vrow-name { font-weight:500; font-size:14.5px; }
