@@ -12,19 +12,25 @@ not a production system.
 ## What it does
 
 **Validate Information** (representative view)
-- Browse ministries and open the department or agency you represent.
+- Browse ministries and open the department or agency you represent — the
+  directory nests three levels (Ministry → body → facility).
 - For each field — telephone, email, address, and the directory of key role
   numbers — confirm it as correct or supply a correction.
 - Affirm the details are accurate and submit for review.
+- **Add a missing sub-component:** if a department or facility that should
+  exist is not listed, propose it. The proposal goes into the review queue for
+  a coordinator to approve, which adds it to the directory.
 - A per-organisation progress rollup (e.g. `3/10`) shows how many entries are
   still outstanding.
 
-**Coordinator Dashboard** (reviewer view, access-code protected)
+**Coordinator Dashboard** (reviewer view, @govtech.bb sign-in required)
 - Review submitted entries side by side with what was on file, with a
   change summary and a full audit trail (submitted → approved / returned).
-- Approve an entry or return it for another look.
-- Publish the approved set: download `mda-contacts.json`, or open a GitHub
-  pull request that commits the directory to a target repository.
+- Approve an entry — which writes the change straight into the live directory
+  for everyone — or return it for another look.
+- Edit the on-file details of any record, and add or remove sub-components
+  under a ministry.
+- Export the directory as JSON or CSV.
 
 **Deep links** — link a representative straight to their organisation with a
 URL hash or query parameter:
@@ -47,10 +53,11 @@ component.
 
 - **React** single-file component — the default export of
   [`mda-validation-portal.jsx`](mda-validation-portal.jsx).
-- **[lucide-react](https://lucide.dev)** for icons.
+- **Supabase** for storage and coordinator auth, reached directly over its REST
+  and Auth endpoints with `fetch` — no client library.
 - Styling is plain CSS (design tokens as custom properties) injected by the
-  component — no build step or CSS framework required.
-- State is entirely text-based — there are no icons.
+  component — no CSS framework required.
+- The interface is entirely text-based — there are no icons.
 
 ## How data flows
 
@@ -95,58 +102,73 @@ Coordinators sign in with their **@govtech.bb** account. The domain is enforced
 by the RLS policies above (a non-govtech.bb user can authenticate but can't
 read the queue or write the directory).
 
-- **Google (recommended, since the team uses Google Workspace):** in Supabase →
-  Authentication → Providers → **Google**, enable it and paste a Google OAuth
-  client ID + secret (from Google Cloud console; set the consent screen to
-  *Internal* so only govtech.bb accounts can use it, and add
+- **Email + password (active method):** Authentication → Providers → **Email**
+  (on by default). A coordinator uses **Create an account** once — entering
+  their @govtech.bb email and a password — then signs in with the same details.
+- **Google (built in but hidden):** the "Sign in with Google" button is gated
+  behind the `GOOGLE_SIGN_IN` flag near the top of `mda-validation-portal.jsx`,
+  currently `false`. To enable it, set the flag to `true` and, in Supabase →
+  Authentication → Providers → **Google**, paste a Google OAuth client ID +
+  secret (from the Google Cloud console; set the consent screen to *Internal*
+  so only govtech.bb accounts can use it, and add
   `https://<project>.supabase.co/auth/v1/callback` as an authorized redirect
-  URI). The app's "Sign in with Google" button then works.
-- **Email + password:** Authentication → Providers → **Email** (on by default).
-  Coordinators use "Create an account" once, then sign in.
+  URI).
 
 `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set near the top of
 `mda-validation-portal.jsx`. Until the SQL above is run, admin actions won't be
 able to write; until a provider is configured, sign-in won't succeed.
 
+### Forgotten password
+
+A coordinator who forgets their password can reset it themselves — no admin
+involvement:
+
+1. **Coordinator dashboard → Forgotten your password?** → enter the @govtech.bb
+   email → **Send reset link**. This calls Supabase `/auth/v1/recover` with a
+   `redirect_to` back to the portal. The confirmation message is deliberately
+   generic ("If that account exists…") so it never reveals which emails have
+   accounts.
+2. The emailed link returns to the portal with a `type=recovery` token, which
+   opens a **Set a new password** screen. Saving updates the password and signs
+   the coordinator straight in.
+
+For the emailed link to return to the portal, the live URL must be registered
+in Supabase → Authentication → **URL Configuration**:
+
+- **Site URL:** `https://govtech-bb.github.io/mda-directory/`
+- **Redirect URLs:** add the same URL to the allow-list.
+
+Supabase honours a `redirect_to` only when it matches the Site URL or a
+Redirect URLs entry; otherwise it falls back to the Site URL. Keep both pointed
+at the live portal (update them if the site ever moves to a custom domain).
+
 ## Run locally
 
-The repository holds the component only. To preview it, drop it into a minimal
-React app — for example with [Vite](https://vite.dev):
+The repository is a [Vite](https://vite.dev) app. `src/main.jsx` renders the
+`mda-validation-portal.jsx` component; `index.html` is the entry point.
 
 ```bash
-npm create vite@latest mda-portal -- --template react
-cd mda-portal
-npm install lucide-react
-```
-
-Copy `mda-validation-portal.jsx` into `src/`, then render it:
-
-```jsx
-// src/main.jsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "./mda-validation-portal.jsx";
-
-createRoot(document.getElementById("root")).render(<App />);
-```
-
-```bash
+npm install
 npm run dev
 ```
+
+`npm run build` produces the static site in `dist/`, and `npm run preview`
+serves that build. Deployment to GitHub Pages runs automatically on every push
+to `main` (see `.github/workflows/`), with Vite's `base` set to
+`/mda-directory/`.
 
 ## Configuration
 
 Set near the top of `mda-validation-portal.jsx`:
 
-| Constant      | Purpose                                                        |
-| ------------- | ------------------------------------------------------------- |
-| `ACCESS_CODE` | Shared sign-in code for the Coordinator Dashboard.            |
-| `KEY`         | Storage key for the saved records.                            |
-| `SHARED`      | Whether records are read from / written to the shared store.  |
-
-Publishing to GitHub requires the target repository as `owner/name` and a
-GitHub access token with `repo` permission, both entered in the Publish panel.
-The token is used only for that request from the browser and is never stored.
+| Constant             | Purpose                                                                 |
+| -------------------- | ----------------------------------------------------------------------- |
+| `SUPABASE_URL`       | Supabase project URL (the directory and submissions live here).         |
+| `SUPABASE_ANON_KEY`  | Supabase publishable (public) key — safe to ship; RLS does the guarding.|
+| `ADMIN_EMAIL_DOMAIN` | Email domain allowed to act as a coordinator (`govtech.bb`).            |
+| `GOOGLE_SIGN_IN`     | Show the "Sign in with Google" button (`false` until OAuth is set up).  |
+| `KEY`                | Storage key for the directory records (also the `kv` row key).          |
+| `SESSION_KEY`        | localStorage key holding the signed-in coordinator's session.          |
 
 ## Source data
 
