@@ -127,6 +127,26 @@ function jwtEmail(token) {
     return json.email || json.user_metadata?.email || null;
   } catch (e) { return null; }
 }
+// Password reset: email a recovery link, then set a new password with the
+// recovery token that arrives back in the URL hash (type=recovery).
+async function sbRecover(email) {
+  const appUrl = window.location.origin + window.location.pathname;
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${encodeURIComponent(appUrl)}`, {
+    method: "POST", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error_description || d.msg || d.message || "Could not send the reset email"); }
+  return true;
+}
+async function sbUpdatePassword(token, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT", headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Could not update the password");
+  return { email: data.email };
+}
 const newId = () => "mda_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const R = (r, t) => ({ r, t }); // role helper
 
@@ -462,6 +482,8 @@ export default function App() {
   const [signError, setSignError] = useState("");
   const [signNotice, setSignNotice] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [signMode, setSignMode] = useState("signin"); // "signin" | "reset"
+  const [recovery, setRecovery] = useState(null); // { token, email } after a reset link
   const [pendingSubs, setPendingSubs] = useState([]);
 
   useEffect(() => {
@@ -495,10 +517,15 @@ export default function App() {
     const hp = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
     const sp = new URLSearchParams(window.location.search || "");
     const token = hp.get("access_token");
+    const type = hp.get("type") || sp.get("type");
     const err = hp.get("error_description") || hp.get("error") || sp.get("error_description") || sp.get("error");
-    const confirmed = hp.get("type") === "signup" || sp.get("type") === "signup";
+    const confirmed = type === "signup";
     if (!token && !err && !confirmed) return;
-    if (token) {
+    if (token && type === "recovery") {
+      // Arrived from a password-reset link — let them set a new password.
+      setRecovery({ token, email: (jwtEmail(token) || "").toLowerCase() });
+      setTab("dashboard");
+    } else if (token) {
       const email = (jwtEmail(token) || "").toLowerCase();
       if (email.endsWith("@" + ADMIN_EMAIL_DOMAIN)) {
         setSession({ access_token: token, email });
@@ -780,7 +807,28 @@ export default function App() {
     } catch (e) { setSignError(e.message || "Sign-up failed"); }
     setSigningIn(false);
   };
-  const signOut = () => { setSession(null); setAuthed(false); setReviewer(""); setDashView("overview"); setPendingSubs([]); };
+  const sendReset = async () => {
+    const email = signForm.email.trim().toLowerCase();
+    setSignNotice("");
+    if (!validAdminEmail(email)) { setSignError(`Use your @${ADMIN_EMAIL_DOMAIN} email address.`); return; }
+    setSignError("");
+    setSigningIn(true);
+    try { await sbRecover(email); setSignError(""); setSignNotice("If that account exists, we've emailed a link to reset your password. Check your inbox."); }
+    catch (e) { setSignError(e.message || "Could not send the reset email"); }
+    setSigningIn(false);
+  };
+  const saveNewPassword = async () => {
+    if ((signForm.password || "").length < 8) { setSignError("Choose a password of at least 8 characters."); return; }
+    setSigningIn(true);
+    try {
+      await sbUpdatePassword(recovery.token, signForm.password);
+      // The recovery token is a valid session, so sign them straight in.
+      setSession({ access_token: recovery.token, email: recovery.email });
+      setReviewer(recovery.email); setAuthed(true); setRecovery(null); setSignError(""); setSignNotice(""); setSignForm({ email: "", password: "" });
+    } catch (e) { setSignError(e.message || "Could not update the password"); }
+    setSigningIn(false);
+  };
+  const signOut = () => { setSession(null); setAuthed(false); setReviewer(""); setDashView("overview"); setPendingSubs([]); setSignMode("signin"); setRecovery(null); };
 
   const addRecord = async () => {
     const name = newName.trim(); if (!name) return;
@@ -1147,24 +1195,49 @@ export default function App() {
         ) : !authed ? (
           <section className="fade signin-wrap">
             <div className="signin-card">
-              <h2>Coordinator sign in</h2>
-              <p>For the coordinating team. Use your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> account to review submissions and update the official record.</p>
-              {signError && <p className="field-err">{signError}</p>}
-              {signNotice && <p className="signin-ok">{signNotice}</p>}
-              {GOOGLE_SIGN_IN && <>
-                <button type="button" className="btn google-btn signin-btn" onClick={sbGoogleSignIn}>Sign in with Google</button>
-                <div className="signin-sep"><span>or use email</span></div>
-              </>}
-              <div className="lbl">
-                <label htmlFor="admin-email">Work email</label>
-                <input id="admin-email" type="email" inputMode="email" autoComplete="email" value={signForm.email} onChange={(e) => setSignForm({ ...signForm, email: e.target.value })} placeholder={`name@${ADMIN_EMAIL_DOMAIN}`} onKeyDown={(e) => e.key === "Enter" && signIn()} />
-              </div>
-              <div className="lbl">
-                <label htmlFor="admin-password">Password</label>
-                <input id="admin-password" type="password" autoComplete="current-password" value={signForm.password} onChange={(e) => setSignForm({ ...signForm, password: e.target.value })} placeholder="Your password" onKeyDown={(e) => e.key === "Enter" && signIn()} />
-              </div>
-              <button className="btn primary signin-btn" onClick={signIn} disabled={signingIn}>{signingIn ? "Signing in…" : "Sign in"}</button>
-              <p className="signin-createline"><button type="button" className="linklike" onClick={signUp} disabled={signingIn}>Create an account</button></p>
+              {recovery ? (<>
+                <h2>Set a new password</h2>
+                <p>Resetting the password for <strong>{recovery.email}</strong>. Choose a new one to finish.</p>
+                {signError && <p className="field-err">{signError}</p>}
+                <div className="lbl">
+                  <label htmlFor="new-password">New password</label>
+                  <input id="new-password" type="password" autoComplete="new-password" value={signForm.password} onChange={(e) => setSignForm({ ...signForm, password: e.target.value })} placeholder="At least 8 characters" onKeyDown={(e) => e.key === "Enter" && saveNewPassword()} />
+                </div>
+                <button className="btn primary signin-btn" onClick={saveNewPassword} disabled={signingIn}>{signingIn ? "Saving…" : "Save new password"}</button>
+              </>) : signMode === "reset" ? (<>
+                <h2>Reset your password</h2>
+                <p>Enter your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> email and we'll send a link to set a new password.</p>
+                {signError && <p className="field-err">{signError}</p>}
+                {signNotice && <p className="signin-ok">{signNotice}</p>}
+                <div className="lbl">
+                  <label htmlFor="reset-email">Work email</label>
+                  <input id="reset-email" type="email" inputMode="email" autoComplete="email" value={signForm.email} onChange={(e) => setSignForm({ ...signForm, email: e.target.value })} placeholder={`name@${ADMIN_EMAIL_DOMAIN}`} onKeyDown={(e) => e.key === "Enter" && sendReset()} />
+                </div>
+                <button className="btn primary signin-btn" onClick={sendReset} disabled={signingIn}>{signingIn ? "Sending…" : "Send reset link"}</button>
+                <p className="signin-createline"><button type="button" className="linklike" onClick={() => { setSignMode("signin"); setSignError(""); setSignNotice(""); }}>Back to sign in</button></p>
+              </>) : (<>
+                <h2>Coordinator sign in</h2>
+                <p>For the coordinating team. Use your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> account to review submissions and update the official record.</p>
+                {GOOGLE_SIGN_IN && <>
+                  <button type="button" className="btn google-btn signin-btn" onClick={sbGoogleSignIn}>Sign in with Google</button>
+                  <div className="signin-sep"><span>or use email</span></div>
+                </>}
+                <div className="lbl">
+                  <label htmlFor="admin-email">Work email</label>
+                  <input id="admin-email" type="email" inputMode="email" autoComplete="email" value={signForm.email} onChange={(e) => setSignForm({ ...signForm, email: e.target.value })} placeholder={`name@${ADMIN_EMAIL_DOMAIN}`} onKeyDown={(e) => e.key === "Enter" && signIn()} />
+                </div>
+                <div className="lbl">
+                  <label htmlFor="admin-password">Password</label>
+                  <input id="admin-password" type="password" autoComplete="current-password" value={signForm.password} onChange={(e) => setSignForm({ ...signForm, password: e.target.value })} placeholder="Your password" onKeyDown={(e) => e.key === "Enter" && signIn()} />
+                </div>
+                {signError && <p className="field-err">{signError}</p>}
+                {signNotice && <p className="signin-ok">{signNotice}</p>}
+                <button className="btn primary signin-btn" onClick={signIn} disabled={signingIn}>{signingIn ? "Signing in…" : "Sign in"}</button>
+                <p className="signin-createline"><button type="button" className="linklike" onClick={() => { setSignMode("reset"); setSignError(""); setSignNotice(""); }}>Forgotten your password?</button></p>
+                <div className="signin-sep"><span>new coordinator?</span></div>
+                <button type="button" className="btn ghost signin-btn" onClick={signUp} disabled={signingIn}>Create an account</button>
+                <p className="signin-alt-note">Enter your @{ADMIN_EMAIL_DOMAIN} email and a password above, then select Create an account.</p>
+              </>)}
             </div>
           </section>
         ) : (
@@ -1688,6 +1761,7 @@ textarea { resize:vertical; }
 .signin-sep { display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--muted); font-size:13px; }
 .signin-sep::before, .signin-sep::after { content:""; flex:1; height:1px; background:var(--line); }
 .signin-createline { text-align:center; margin:14px 0 0; }
+.signin-alt-note { text-align:center; color:var(--muted); font-size:13px; margin:8px 0 0; }
 .signin-note { display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--muted); margin:16px 0 0; }
 .signed-as { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--navy); background:var(--govbb-blue-10); border:1px solid var(--line); border-radius:var(--govbb-radius); padding:5px 11px; }
 /* Long strings (emails, URLs, code) never force horizontal scroll. */
