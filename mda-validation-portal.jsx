@@ -475,6 +475,7 @@ export default function App() {
   const [showLinks, setShowLinks] = useState(false);
   const [showApproved, setShowApproved] = useState(false);
   const [approvedOpen, setApprovedOpen] = useState({});
+  const [linksAwaitingOnly, setLinksAwaitingOnly] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -628,6 +629,30 @@ export default function App() {
   }, [records, ministries]);
   const slugOf = (rec) => slugMap.byId[rec.id] || slugify(rec.name);
   const linkFor = (rec) => `${baseUrl()}#mda=${slugOf(rec)}`;
+  // Outreach: an organisation has "responded" once it has an approved record
+  // or a submission waiting in the queue; everything else still needs chasing.
+  const pendingOrgIds = useMemo(() => new Set(pendingSubs.map((s) => s.org_id).filter(Boolean)), [pendingSubs]);
+  const hasResponded = (r) => r.status === "approved" || pendingOrgIds.has(r.id);
+  // A ready-to-send, plain-English invitation carrying this body's own link.
+  const inviteEmail = (r) => {
+    const link = linkFor(r);
+    const subject = `Confirm ${r.name}'s official contact details`;
+    const body = [
+      "Dear colleague,",
+      "",
+      `We are updating the Government of Barbados directory of official contact details, and we need your help to confirm the entry for ${r.name}.`,
+      "",
+      "Please open your organisation's form using the link below, check the telephone, email, address and key role numbers we hold, correct anything that is wrong, and submit:",
+      "",
+      link,
+      "",
+      "It only takes a few minutes. Where a detail is already correct, you can confirm it as it stands.",
+      "",
+      "Thank you,",
+      "Directory coordination team",
+    ].join("\n");
+    return `Subject: ${subject}\n\n${body}`;
+  };
 
   const copyText = async (text, key) => {
     try { await navigator.clipboard.writeText(text); }
@@ -926,11 +951,11 @@ export default function App() {
     return out;
   }, [ministries, records]);
   const exportLinksCsv = () => {
-    const head = ["Type", "Parent Ministry", "Organisation", "On-file Email", "Validation Link"];
+    const head = ["Type", "Parent Ministry", "Organisation", "On-file Email", "Responded", "Validation Link"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const rows = orderedRecords.map((r) => {
       const parent = r.parentId ? (records.find((p) => p.id === r.parentId)?.name || "") : "";
-      return [r.kind, parent, r.name, r.currentEmail, linkFor(r)].map(esc).join(",");
+      return [r.kind, parent, r.name, r.currentEmail, hasResponded(r) ? "Yes" : "No", linkFor(r)].map(esc).join(",");
     });
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "mda-validation-links.csv"; a.click(); URL.revokeObjectURL(url);
@@ -1291,30 +1316,38 @@ export default function App() {
 
             {showLinks && (() => {
               const lq = linkSearch.trim().toLowerCase();
-              const list = orderedRecords.filter((r) => !lq || r.name.toLowerCase().includes(lq));
+              const list = orderedRecords.filter((r) => (!lq || r.name.toLowerCase().includes(lq)) && (!linksAwaitingOnly || !hasResponded(r)));
+              const awaitingCount = orderedRecords.filter((r) => !hasResponded(r)).length;
               return (
                 <div className="links-panel">
                   <div className="links-intro">
-                    <p><strong>One link per organisation.</strong> Each opens straight to that body's validation form. Send each MDA only its own link.</p>
-                    <p className="links-base"><Info size={13} /> Links use this portal's address: <code>{baseUrl() || "(unavailable)"}</code> — share or publish the portal at a stable web address, then the links resolve there.</p>
+                    <p><strong>Send each MDA its own validation link.</strong> Copy a ready-made invitation for any organisation, or download the list to mail-merge. No email is sent from here — you send it from your own mail tool.</p>
+                    <p className="links-base"><Info size={13} /> {awaitingCount} of {orderedRecords.length} organisations still need to respond. Links use this portal's address: <code>{baseUrl() || "(unavailable)"}</code>.</p>
                   </div>
                   <div className="links-tools">
-                    <button className="btn ghost sm" onClick={copyAllLinks}>{copiedKey === "all" ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy all</>}</button>
-                    <button className="btn ghost sm" onClick={exportLinksCsv}><Download size={14} /> Download links (CSV)</button>
+                    <button className={linksAwaitingOnly ? "btn primary sm" : "btn ghost sm"} onClick={() => setLinksAwaitingOnly((v) => !v)}>{linksAwaitingOnly ? "Showing awaiting only" : "Show only awaiting"}</button>
+                    <button className="btn ghost sm" onClick={copyAllLinks}>{copiedKey === "all" ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy all links</>}</button>
+                    <button className="btn ghost sm" onClick={exportLinksCsv}><Download size={14} /> Download for mail-merge (CSV)</button>
                     <div className="links-search"><Search size={15} /><input placeholder="Filter…" value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} />{linkSearch && <button className="clear" onClick={() => setLinkSearch("")}>Clear</button>}</div>
                   </div>
+                  {list.length === 0 ? <div className="empty">{linksAwaitingOnly ? "Every organisation here has responded." : "No organisations match your filter."}</div> : (
                   <ul className="links-list">
                     {list.map((r) => (
                       <li key={r.id} className={`link-item${r.kind === "department" ? " is-dept" : ""}`}>
                         <div className="link-meta">
                           {r.kind === "department" ? <CornerDownRight size={13} className="dept-ic" /> : <Landmark size={14} className="link-min-ic" />}
                           <span className="link-name">{r.name}</span>
+                          <span className={`link-status ${hasResponded(r) ? "responded" : "awaiting"}`}>{hasResponded(r) ? "Responded" : "Awaiting"}</span>
                         </div>
                         <code className="link-url">{linkFor(r)}</code>
-                        <button className="btn ghost sm link-copy" onClick={() => copyText(linkFor(r), r.id)}>{copiedKey === r.id ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}</button>
+                        <div className="link-actions">
+                          <button className="btn ghost sm link-copy" onClick={() => copyText(inviteEmail(r), "inv-" + r.id)}>{copiedKey === "inv-" + r.id ? <><Check size={14} /> Invite copied</> : <><Copy size={14} /> Copy invite</>}</button>
+                          <button className="btn ghost sm link-copy" onClick={() => copyText(linkFor(r), r.id)}>{copiedKey === r.id ? <><Check size={14} /> Copied</> : <><Link2 size={14} /> Link</>}</button>
+                        </div>
                       </li>
                     ))}
                   </ul>
+                  )}
                 </div>
               );
             })()}
@@ -1813,7 +1846,11 @@ textarea { resize:vertical; }
 .link-item.is-dept { background:#f8f9fb; }
 .link-meta { display:flex; align-items:center; gap:7px; min-width:0; }
 .link-min-ic { color:var(--navy); flex:0 0 auto; } .link-name { font-size:13.5px; font-weight:500; }
+.link-status { flex:0 0 auto; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:1px 8px; border-radius:999px; }
+.link-status.responded { background:#e7f4ea; color:var(--confirmed); }
+.link-status.awaiting { background:#fdf3e2; color:var(--pending); }
 .link-url { font-size:11.5px; color:var(--muted); background:#f5f6f8; border:1px solid var(--line); border-radius:6px; padding:4px 8px; word-break:break-all; }
+.link-actions { display:flex; gap:6px; justify-content:flex-end; }
 .link-copy { white-space:nowrap; }
 .edit-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; } .edit-actions { grid-column:1 / -1; justify-content:flex-end; }
 .edit-sep { grid-column:1 / -1; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border-top:1px solid var(--line); padding-top:12px; margin-top:2px; }
