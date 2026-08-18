@@ -474,6 +474,7 @@ export default function App() {
   const [pendingSlug, setPendingSlug] = useState(null);
   const [showLinks, setShowLinks] = useState(false);
   const [showApproved, setShowApproved] = useState(false);
+  const [approvedOpen, setApprovedOpen] = useState({});
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -599,6 +600,16 @@ export default function App() {
   const recPath = (r) => recParts(r).join(" › ");
   // The top-level ministry (or top-level body) a record sits under.
   const rootOf = (r) => { let cur = r, g = 0; while (cur.parentId && recById[cur.parentId] && g++ < 6) cur = recById[cur.parentId]; return cur; };
+  // Approved records grouped under their top-level ministry, alphabetical.
+  const approvedGroups = useMemo(() => {
+    const groups = new Map();
+    for (const r of approvedList) {
+      const root = rootOf(r);
+      if (!groups.has(root.id)) groups.set(root.id, { id: root.id, name: root.name, rows: [] });
+      groups.get(root.id).rows.push(r);
+    }
+    return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [approvedList, records]);
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
   const slugMap = useMemo(() => {
@@ -1314,43 +1325,54 @@ export default function App() {
               <div className="approved-panel">
                 <div className="approved-head">
                   <h3>Approved organisations <span className="approved-count">{approvedList.length}</span></h3>
-                  {approvedList.length > 0 && <button className="btn ghost sm" onClick={exportApprovedCsv}><Download size={14} /> Download CSV</button>}
+                  {approvedList.length > 0 && (() => {
+                    const allOpen = approvedGroups.every((g) => approvedOpen[g.id]);
+                    return (
+                      <div className="approved-head-tools">
+                        <button className="btn ghost sm" onClick={() => { if (allOpen) { setApprovedOpen({}); } else { const n = {}; approvedGroups.forEach((g) => { n[g.id] = true; }); setApprovedOpen(n); } }}>{allOpen ? "Collapse all" : "Expand all"}</button>
+                        <button className="btn ghost sm" onClick={exportApprovedCsv}><Download size={14} /> Download CSV</button>
+                      </div>
+                    );
+                  })()}
                 </div>
                 {approvedList.length === 0 ? (
                   <div className="empty">Nothing has been approved yet.</div>
                 ) : (
-                  <div className="approved-table-wrap">
-                    <table className="approved-table">
-                      <thead><tr><th>Organisation</th><th>Submitted by</th><th>Email</th><th>Approved by</th><th>Approved</th></tr></thead>
-                      {(() => {
-                        // Group the approved records under their top-level ministry.
-                        const groups = new Map();
-                        for (const r of approvedList) {
-                          const root = rootOf(r);
-                          if (!groups.has(root.id)) groups.set(root.id, { name: root.name, rows: [] });
-                          groups.get(root.id).rows.push(r);
-                        }
-                        const ordered = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
-                        return ordered.map((g) => (
-                          <tbody key={g.name} className="approved-group">
-                            <tr className="approved-group-head"><th colSpan={5}>{g.name}<span className="approved-group-n">{g.rows.length}</span></th></tr>
-                            {g.rows.map((r) => {
-                              const parts = recParts(r);
-                              const label = parts.length <= 1 ? <span className="muted">Ministry head office</span> : parts.slice(1).join(" › ");
-                              return (
-                                <tr key={r.id}>
-                                  <td>{label}</td>
-                                  <td>{r.repName ? <>{r.repName}{r.repTitle ? <span className="muted"> · {r.repTitle}</span> : null}</> : <span className="muted">Entered by coordinator</span>}</td>
-                                  <td>{r.repEmail ? <a href={`mailto:${r.repEmail}`}>{r.repEmail}</a> : <span className="muted">—</span>}</td>
-                                  <td>{r.reviewedBy || <span className="muted">—</span>}</td>
-                                  <td className="nowrap">{r.reviewedAt ? fmtDate(r.reviewedAt) : "—"}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        ));
-                      })()}
-                    </table>
+                  <div className="approved-accordion">
+                    {approvedGroups.map((g) => {
+                      const open = !!approvedOpen[g.id];
+                      return (
+                        <div key={g.id} className={`approved-group${open ? " open" : ""}`}>
+                          <button type="button" className="approved-group-head" aria-expanded={open} onClick={() => setApprovedOpen((o) => ({ ...o, [g.id]: !o[g.id] }))}>
+                            <ChevronRight size={16} className={`chev${open ? " rot" : ""}`} />
+                            <span className="approved-group-name">{g.name}</span>
+                            <span className="approved-group-n">{g.rows.length}</span>
+                          </button>
+                          {open && (
+                            <div className="approved-table-wrap">
+                              <table className="approved-table">
+                                <thead><tr><th>Organisation</th><th>Submitted by</th><th>Email</th><th>Approved by</th><th>Approved</th></tr></thead>
+                                <tbody>
+                                  {g.rows.map((r) => {
+                                    const parts = recParts(r);
+                                    const label = parts.length <= 1 ? <span className="muted">Ministry head office</span> : parts.slice(1).join(" › ");
+                                    return (
+                                      <tr key={r.id}>
+                                        <td>{label}</td>
+                                        <td>{r.repName ? <>{r.repName}{r.repTitle ? <span className="muted"> · {r.repTitle}</span> : null}</> : <span className="muted">Entered by coordinator</span>}</td>
+                                        <td>{r.repEmail ? <a href={`mailto:${r.repEmail}`}>{r.repEmail}</a> : <span className="muted">—</span>}</td>
+                                        <td>{r.reviewedBy || <span className="muted">—</span>}</td>
+                                        <td className="nowrap">{r.reviewedAt ? fmtDate(r.reviewedAt) : "—"}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1737,12 +1759,21 @@ textarea { resize:vertical; }
 .approved-table { width:100%; border-collapse:collapse; font-size:14px; }
 .approved-table th, .approved-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
 .approved-table th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
-.approved-table tbody:last-child tr:last-child td { border-bottom:0; }
+.approved-table tbody tr:last-child td { border-bottom:0; }
 .approved-table a { color:var(--govbb-teal-00); }
 .approved-table .muted, .meta .muted { color:var(--muted); }
 .approved-table .nowrap { white-space:nowrap; }
-.approved-group-head th { background:var(--govbb-blue-05, #eef2fb); color:var(--navy); font-size:13.5px; font-weight:700; text-transform:none; letter-spacing:0; padding:8px 12px; border-top:1px solid var(--line); }
-.approved-group-n { display:inline-block; margin-left:8px; background:var(--surface); border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:0 8px; font-size:12px; font-weight:600; }
+.approved-accordion { display:flex; flex-direction:column; gap:8px; }
+.approved-group { border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
+.approved-group.open { border-color:var(--confirmed); }
+.approved-group-head { width:100%; display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--govbb-blue-05, #eef2fb); border:0; cursor:pointer; font-family:inherit; text-align:left; }
+.approved-group-head .chev { color:var(--muted); flex:0 0 auto; transition:transform .12s; }
+.approved-group-head .chev.rot { transform:rotate(90deg); }
+.approved-group-name { flex:1 1 auto; font-size:14.5px; font-weight:700; color:var(--navy); }
+.approved-group-n { flex:0 0 auto; background:var(--surface); border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:0 9px; font-size:12px; font-weight:600; }
+.approved-group .approved-table-wrap { border-top:1px solid var(--line); }
+.approved-group .approved-table th:first-child, .approved-group .approved-table td:first-child { padding-left:16px; }
+.approved-head-tools { display:flex; gap:8px; flex-wrap:wrap; }
 .add-row { display:flex; gap:9px; margin-bottom:18px; flex-wrap:wrap; }
 .add-row input { flex:1; min-width:180px; } .add-row select { flex:0 0 auto; max-width:240px; }
 .privacy { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); padding:16px 0 0; }
