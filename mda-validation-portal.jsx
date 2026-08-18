@@ -593,8 +593,12 @@ export default function App() {
   }, [pendingSubs, records]);
   const approvedList = useMemo(() => records.filter((r) => r.status === "approved"), [records]);
   const recById = useMemo(() => Object.fromEntries(records.map((r) => [r.id, r])), [records]);
-  // Full "Ministry › body › facility" label for a record, walking up the parent chain.
-  const recPath = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts.join(" › "); };
+  // Name segments from the top-level ministry down to this record.
+  const recParts = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts; };
+  // Full "Ministry › body › facility" label for a record.
+  const recPath = (r) => recParts(r).join(" › ");
+  // The top-level ministry (or top-level body) a record sits under.
+  const rootOf = (r) => { let cur = r, g = 0; while (cur.parentId && recById[cur.parentId] && g++ < 6) cur = recById[cur.parentId]; return cur; };
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
   const slugMap = useMemo(() => {
@@ -897,9 +901,9 @@ export default function App() {
     const a = document.createElement("a"); a.href = url; a.download = "mda-validation-results.csv"; a.click(); URL.revokeObjectURL(url);
   };
   const exportApprovedCsv = () => {
-    const head = ["Organisation", "Submitted by", "Title or role", "Email", "Approved at", "Reviewed by"];
+    const head = ["Ministry", "Organisation", "Submitted by", "Title or role", "Email", "Approved at", "Reviewed by"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const rows = approvedList.map((r) => [recPath(r), r.repName, r.repTitle, r.repEmail, r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : "", r.reviewedBy].map(esc).join(","));
+    const rows = approvedList.map((r) => [rootOf(r).name, recPath(r), r.repName, r.repTitle, r.repEmail, r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : "", r.reviewedBy].map(esc).join(","));
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "mda-approved.csv"; a.click(); URL.revokeObjectURL(url);
   };
@@ -1315,17 +1319,35 @@ export default function App() {
                 ) : (
                   <div className="approved-table-wrap">
                     <table className="approved-table">
-                      <thead><tr><th>Organisation</th><th>Submitted by</th><th>Email</th><th>Approved</th></tr></thead>
-                      <tbody>
-                        {approvedList.map((r) => (
-                          <tr key={r.id}>
-                            <td>{recPath(r)}</td>
-                            <td>{r.repName ? <>{r.repName}{r.repTitle ? <span className="muted"> · {r.repTitle}</span> : null}</> : <span className="muted">Entered by coordinator</span>}</td>
-                            <td>{r.repEmail ? <a href={`mailto:${r.repEmail}`}>{r.repEmail}</a> : <span className="muted">—</span>}</td>
-                            <td className="nowrap">{r.reviewedAt ? fmtDate(r.reviewedAt) : "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
+                      <thead><tr><th>Organisation</th><th>Submitted by</th><th>Email</th><th>Approved by</th><th>Approved</th></tr></thead>
+                      {(() => {
+                        // Group the approved records under their top-level ministry.
+                        const groups = new Map();
+                        for (const r of approvedList) {
+                          const root = rootOf(r);
+                          if (!groups.has(root.id)) groups.set(root.id, { name: root.name, rows: [] });
+                          groups.get(root.id).rows.push(r);
+                        }
+                        const ordered = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+                        return ordered.map((g) => (
+                          <tbody key={g.name} className="approved-group">
+                            <tr className="approved-group-head"><th colSpan={5}>{g.name}<span className="approved-group-n">{g.rows.length}</span></th></tr>
+                            {g.rows.map((r) => {
+                              const parts = recParts(r);
+                              const label = parts.length <= 1 ? <span className="muted">Ministry head office</span> : parts.slice(1).join(" › ");
+                              return (
+                                <tr key={r.id}>
+                                  <td>{label}</td>
+                                  <td>{r.repName ? <>{r.repName}{r.repTitle ? <span className="muted"> · {r.repTitle}</span> : null}</> : <span className="muted">Entered by coordinator</span>}</td>
+                                  <td>{r.repEmail ? <a href={`mailto:${r.repEmail}`}>{r.repEmail}</a> : <span className="muted">—</span>}</td>
+                                  <td>{r.reviewedBy || <span className="muted">—</span>}</td>
+                                  <td className="nowrap">{r.reviewedAt ? fmtDate(r.reviewedAt) : "—"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        ));
+                      })()}
                     </table>
                   </div>
                 )}
@@ -1709,10 +1731,12 @@ textarea { resize:vertical; }
 .approved-table { width:100%; border-collapse:collapse; font-size:14px; }
 .approved-table th, .approved-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
 .approved-table th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
-.approved-table tr:last-child td { border-bottom:0; }
+.approved-table tbody:last-child tr:last-child td { border-bottom:0; }
 .approved-table a { color:var(--govbb-teal-00); }
 .approved-table .muted, .meta .muted { color:var(--muted); }
 .approved-table .nowrap { white-space:nowrap; }
+.approved-group-head th { background:var(--govbb-blue-05, #eef2fb); color:var(--navy); font-size:13.5px; font-weight:700; text-transform:none; letter-spacing:0; padding:8px 12px; border-top:1px solid var(--line); }
+.approved-group-n { display:inline-block; margin-left:8px; background:var(--surface); border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:0 8px; font-size:12px; font-weight:600; }
 .add-row { display:flex; gap:9px; margin-bottom:18px; flex-wrap:wrap; }
 .add-row input { flex:1; min-width:180px; } .add-row select { flex:0 0 auto; max-width:240px; }
 .privacy { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); padding:16px 0 0; }
