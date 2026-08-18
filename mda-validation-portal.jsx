@@ -473,6 +473,7 @@ export default function App() {
   const [linkMode, setLinkMode] = useState(false);
   const [pendingSlug, setPendingSlug] = useState(null);
   const [showLinks, setShowLinks] = useState(false);
+  const [showApproved, setShowApproved] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -591,6 +592,9 @@ export default function App() {
     });
   }, [pendingSubs, records]);
   const approvedList = useMemo(() => records.filter((r) => r.status === "approved"), [records]);
+  const recById = useMemo(() => Object.fromEntries(records.map((r) => [r.id, r])), [records]);
+  // Full "Ministry › body › facility" label for a record, walking up the parent chain.
+  const recPath = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts.join(" › "); };
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
   const slugMap = useMemo(() => {
@@ -753,6 +757,13 @@ export default function App() {
     ...x, status: "approved",
     currentPhone: r.validatedPhone, currentEmail: r.validatedEmail, currentAddress: r.validatedAddress,
     roles: (r.validatedRoles && r.validatedRoles.length) ? r.validatedRoles : x.roles,
+    // Keep who submitted this (and what they submitted) on the record so the
+    // official directory always shows the person accountable for the details.
+    submissionType: r.submissionType || x.submissionType || "",
+    repName: r.repName || "", repTitle: r.repTitle || "", repEmail: r.repEmail || "", notes: r.notes || "",
+    submittedAt: r.submittedAt || x.submittedAt || null,
+    validatedPhone: r.validatedPhone, validatedEmail: r.validatedEmail, validatedAddress: r.validatedAddress,
+    validatedRoles: (r.validatedRoles && r.validatedRoles.length) ? r.validatedRoles : (x.validatedRoles || []),
     reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
     audit: [...(x.audit || []), auditEntry("approved", reviewer)],
   } : x);
@@ -884,6 +895,13 @@ export default function App() {
     });
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "mda-validation-results.csv"; a.click(); URL.revokeObjectURL(url);
+  };
+  const exportApprovedCsv = () => {
+    const head = ["Organisation", "Submitted by", "Title or role", "Email", "Approved at", "Reviewed by"];
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = approvedList.map((r) => [recPath(r), r.repName, r.repTitle, r.repEmail, r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : "", r.reviewedBy].map(esc).join(","));
+    const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "mda-approved.csv"; a.click(); URL.revokeObjectURL(url);
   };
   const orderedRecords = useMemo(() => {
     const out = [];
@@ -1285,7 +1303,34 @@ export default function App() {
             })()}
 
             <div className="progress-wrap"><div className="progress-row"><span>{stats.done} of {stats.total} responded</span><span>{stats.pct}%</span></div><div className="progress"><div className="progress-fill" style={{ width: `${stats.pct}%` }} /></div></div>
-            <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
+            <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" onClick={() => setShowApproved((v) => !v)} active={showApproved} /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
+            {showApproved && (
+              <div className="approved-panel">
+                <div className="approved-head">
+                  <h3>Approved organisations <span className="approved-count">{approvedList.length}</span></h3>
+                  {approvedList.length > 0 && <button className="btn ghost sm" onClick={exportApprovedCsv}><Download size={14} /> Download CSV</button>}
+                </div>
+                {approvedList.length === 0 ? (
+                  <div className="empty">Nothing has been approved yet.</div>
+                ) : (
+                  <div className="approved-table-wrap">
+                    <table className="approved-table">
+                      <thead><tr><th>Organisation</th><th>Submitted by</th><th>Email</th><th>Approved</th></tr></thead>
+                      <tbody>
+                        {approvedList.map((r) => (
+                          <tr key={r.id}>
+                            <td>{recPath(r)}</td>
+                            <td>{r.repName ? <>{r.repName}{r.repTitle ? <span className="muted"> · {r.repTitle}</span> : null}</> : <span className="muted">Entered by coordinator</span>}</td>
+                            <td>{r.repEmail ? <a href={`mailto:${r.repEmail}`}>{r.repEmail}</a> : <span className="muted">—</span>}</td>
+                            <td className="nowrap">{r.reviewedAt ? fmtDate(r.reviewedAt) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="add-row">
               <input placeholder="Add a ministry, body or facility name…" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecord()} />
               <select value={newParent} onChange={(e) => setNewParent(e.target.value)}>
@@ -1458,7 +1503,11 @@ function Field({ id, label, onfile, value, onChange, placeholder, textarea, type
     </div>
   );
 }
-function Stat({ n, label, cls }) { return <div className={`stat stat-${cls}`}><div className="stat-n">{n}</div><div className="stat-l">{label}</div></div>; }
+function Stat({ n, label, cls, onClick, active }) {
+  const inner = <><div className="stat-n">{n}</div><div className="stat-l">{label}</div></>;
+  if (onClick) return <button type="button" className={`stat stat-${cls} stat-btn${active ? " stat-active" : ""}`} onClick={onClick} aria-pressed={active}>{inner}<span className="stat-caret">{active ? "Hide" : "View"}</span></button>;
+  return <div className={`stat stat-${cls}`}>{inner}</div>;
+}
 function AuditTrail({ entries }) {
   if (!entries || !entries.length) return null;
   const KIND = { submitted: "Submitted for review", approved: "Approved", returned: "Sent back for changes", edited: "On-file details edited" };
@@ -1648,6 +1697,22 @@ textarea { resize:vertical; }
 .stat { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:16px; text-align:center; }
 .stat-n { font-family:'Figtree',system-ui,sans-serif; font-size:30px; font-weight:700; line-height:1; } .stat-l { font-size:12.5px; color:var(--muted); margin-top:6px; }
 .stat-pending .stat-n{color:var(--pending);} .stat-confirmed .stat-n{color:var(--confirmed);} .stat-updated .stat-n{color:var(--updated);} .stat-total .stat-n{color:var(--navy);}
+.stat-btn { cursor:pointer; font-family:inherit; position:relative; transition:border-color .12s, box-shadow .12s; }
+.stat-btn:hover { border-color:var(--confirmed); }
+.stat-active { border-color:var(--confirmed); box-shadow:0 0 0 1px var(--confirmed); }
+.stat-caret { display:block; margin-top:8px; font-size:11px; font-weight:600; color:var(--confirmed); text-transform:uppercase; letter-spacing:.04em; }
+.approved-panel { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:18px; margin-bottom:22px; }
+.approved-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.approved-head h3 { font-size:17px; margin:0; }
+.approved-count { display:inline-block; margin-left:6px; background:var(--confirmed); color:#fff; border-radius:999px; padding:1px 9px; font-size:13px; font-weight:700; }
+.approved-table-wrap { overflow-x:auto; }
+.approved-table { width:100%; border-collapse:collapse; font-size:14px; }
+.approved-table th, .approved-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+.approved-table th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
+.approved-table tr:last-child td { border-bottom:0; }
+.approved-table a { color:var(--govbb-teal-00); }
+.approved-table .muted, .meta .muted { color:var(--muted); }
+.approved-table .nowrap { white-space:nowrap; }
 .add-row { display:flex; gap:9px; margin-bottom:18px; flex-wrap:wrap; }
 .add-row input { flex:1; min-width:180px; } .add-row select { flex:0 0 auto; max-width:240px; }
 .privacy { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); padding:16px 0 0; }
