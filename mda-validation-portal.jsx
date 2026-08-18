@@ -865,7 +865,7 @@ export default function App() {
     await persist(records.filter((r) => !removeIds.has(r.id)));
     if (rowOpen === id) setRowOpen(null);
   };
-  const startEdit = (rec) => { setEditId(rec.id); setEditFields({ name: rec.name, currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress }); };
+  const startEdit = (rec) => { setEditId(rec.id); setEditFields({ name: rec.name, currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress, repName: rec.repName || "", repTitle: rec.repTitle || "", repEmail: rec.repEmail || "" }); };
   const saveEdit = async () => {
     const r0 = records.find((r) => r.id === editId);
     const ch = [];
@@ -875,6 +875,8 @@ export default function App() {
       cmp("Telephone", r0.currentPhone, editFields.currentPhone);
       cmp("Email", r0.currentEmail, editFields.currentEmail);
       cmp("Address", r0.currentAddress, editFields.currentAddress);
+      cmp("Submitted by", r0.repName, editFields.repName);
+      cmp("Contact email", r0.repEmail, editFields.repEmail);
     }
     await persist(records.map((r) => r.id === editId ? { ...r, ...editFields, audit: ch.length ? [...(r.audit || []), auditEntry("edited", reviewer, ch)] : (r.audit || []) } : r));
     setEditId(null); setEditFields(null);
@@ -1390,6 +1392,10 @@ export default function App() {
                                     <label className="lbl"><span>On-file phone</span><input value={editFields.currentPhone} onChange={(e) => setEditFields({ ...editFields, currentPhone: e.target.value })} /></label>
                                     <label className="lbl"><span>On-file email</span><input value={editFields.currentEmail} onChange={(e) => setEditFields({ ...editFields, currentEmail: e.target.value })} /></label>
                                     <label className="lbl wide"><span>On-file address</span><textarea rows={2} value={editFields.currentAddress} onChange={(e) => setEditFields({ ...editFields, currentAddress: e.target.value })} /></label>
+                                    <div className="edit-sep wide">Who supplied these details</div>
+                                    <label className="lbl"><span>Contact name</span><input value={editFields.repName} placeholder="e.g. Jane Grant" onChange={(e) => setEditFields({ ...editFields, repName: e.target.value })} /></label>
+                                    <label className="lbl"><span>Title or role</span><input value={editFields.repTitle} placeholder="e.g. Administrative Officer" onChange={(e) => setEditFields({ ...editFields, repTitle: e.target.value })} /></label>
+                                    <label className="lbl wide"><span>Contact email</span><input type="email" value={editFields.repEmail} placeholder="name@agency.gov.bb" onChange={(e) => setEditFields({ ...editFields, repEmail: e.target.value })} /></label>
                                     <div className="edit-actions"><button className="btn ghost sm" onClick={() => { setEditId(null); setEditFields(null); }}>Cancel</button><button className="btn primary sm" onClick={saveEdit}><Check size={14} /> Save</button></div>
                                   </div>
                                 ) : (
@@ -1779,6 +1785,7 @@ textarea { resize:vertical; }
 .link-url { font-size:11.5px; color:var(--muted); background:#f5f6f8; border:1px solid var(--line); border-radius:6px; padding:4px 8px; word-break:break-all; }
 .link-copy { white-space:nowrap; }
 .edit-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; } .edit-actions { grid-column:1 / -1; justify-content:flex-end; }
+.edit-sep { grid-column:1 / -1; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border-top:1px solid var(--line); padding-top:12px; margin-top:2px; }
 .subtabs { display:flex; gap:4px; margin:18px 0 4px; border-bottom:1px solid var(--line); }
 .subtab { background:transparent; border:0; border-bottom:2.5px solid transparent; font-family:inherit; font-size:13.5px; font-weight:600; color:var(--muted); padding:9px 14px; cursor:pointer; display:flex; align-items:center; gap:7px; }
 .subtab:hover { color:var(--ink); } .subtab.on { color:var(--ink); border-bottom-color:var(--govbb-teal-00); }
