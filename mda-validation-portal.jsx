@@ -33,15 +33,41 @@ const ADMIN_EMAIL_DOMAIN = "govtech.bb";
 const GOOGLE_SIGN_IN = false;
 const SESSION_KEY = "mda-validation:admin-session";
 
-// Live admin session ({ access_token, email }) — set on sign-in, restored on load.
+// Live admin session ({ access_token, refresh_token, expires_at, email }) —
+// set on sign-in, restored on load.
 let SESSION = null;
 try { const s = window.localStorage.getItem(SESSION_KEY); if (s) SESSION = JSON.parse(s); } catch (e) {}
 const setSession = (s) => { SESSION = s; try { s ? window.localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : window.localStorage.removeItem(SESSION_KEY); } catch (e) {} };
+const nowSec = () => Math.floor(Date.now() / 1000);
 
 const supabaseReady = () => !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 const sbHeaders = () => ({ apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" });
 // Authenticated requests carry the coordinator's JWT (falls back to anon).
 const authHeaders = () => SESSION ? { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SESSION.access_token}`, "Content-Type": "application/json" } : sbHeaders();
+// Exchange the refresh token for a fresh access token; updates SESSION in place.
+// Returns the new access token, or null if the session can't be renewed.
+async function sbRefresh() {
+  if (!SESSION || !SESSION.refresh_token) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: SESSION.refresh_token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.access_token) return null;
+    setSession({ access_token: data.access_token, refresh_token: data.refresh_token || SESSION.refresh_token, expires_at: nowSec() + (data.expires_in || 3600), email: SESSION.email });
+    return data.access_token;
+  } catch (e) { return null; }
+}
+// Authenticated fetch that keeps the session alive: refreshes the token just
+// before it expires, and once more if a request still comes back 401.
+async function sbAuthedFetch(url, opts = {}) {
+  if (SESSION && SESSION.expires_at && SESSION.refresh_token && SESSION.expires_at - nowSec() < 60) await sbRefresh();
+  const run = () => fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+  let res = await run();
+  if (res.status === 401 && SESSION && SESSION.refresh_token) { if (await sbRefresh()) res = await run(); }
+  return res;
+}
 
 async function sbLoad() {
   const url = `${SUPABASE_URL}/rest/v1/kv?key=eq.${encodeURIComponent(KEY)}&select=data`;
@@ -52,10 +78,9 @@ async function sbLoad() {
 }
 // Directory write — now requires an authenticated @govtech.bb session (RLS).
 async function sbSave(records) {
-  const url = `${SUPABASE_URL}/rest/v1/kv?on_conflict=key`;
-  const res = await fetch(url, {
+  const res = await sbAuthedFetch(`${SUPABASE_URL}/rest/v1/kv?on_conflict=key`, {
     method: "POST",
-    headers: { ...authHeaders(), Prefer: "resolution=merge-duplicates,return=minimal" },
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
     body: JSON.stringify({ key: KEY, data: records, updated_at: new Date().toISOString() }),
   });
   if (!res.ok) throw new Error(`Supabase save ${res.status}`);
@@ -74,14 +99,14 @@ async function sbSubmit(submission) {
 // Read the pending queue — requires an authenticated @govtech.bb session (RLS).
 async function sbLoadSubmissions() {
   const url = `${SUPABASE_URL}/rest/v1/submissions?status=eq.pending&select=*&order=created_at.asc`;
-  const res = await fetch(url, { headers: authHeaders() });
+  const res = await sbAuthedFetch(url);
   if (!res.ok) throw new Error(`Supabase submissions ${res.status}`);
   return res.json();
 }
 async function sbSetSubmissionStatus(id, status) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
+  const res = await sbAuthedFetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { ...authHeaders(), Prefer: "return=minimal" },
+    headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ status }),
   });
   if (!res.ok) throw new Error(`Supabase submission update ${res.status}`);
@@ -95,7 +120,7 @@ async function sbSignIn(email, password) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Sign-in failed");
-  return { access_token: data.access_token, email: data.user?.email || email };
+  return { access_token: data.access_token, refresh_token: data.refresh_token, expires_at: nowSec() + (data.expires_in || 3600), email: data.user?.email || email };
 }
 async function sbSignUp(email, password) {
   // After clicking the email confirmation link, Supabase sends the user back to
@@ -108,7 +133,7 @@ async function sbSignUp(email, password) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error_description || data.msg || data.message || "Sign-up failed");
   // If email confirmation is off, a session is returned immediately.
-  return { access_token: data.access_token || null, email: data.user?.email || email, needsConfirm: !data.access_token };
+  return { access_token: data.access_token || null, refresh_token: data.refresh_token || null, expires_at: nowSec() + (data.expires_in || 3600), email: data.user?.email || email, needsConfirm: !data.access_token };
 }
 // Google OAuth (Supabase). Redirects to Google, then back to this app with the
 // session in the URL hash (handled on load). `hd` hints the govtech.bb domain.
@@ -423,8 +448,11 @@ async function saveRecords(records) {
   // Always keep a local cache so the app works offline and after a reload.
   try { window.localStorage.setItem(KEY, json); } catch (e) {}
   if (supabaseReady()) {
-    try { await sbSave(records); return true; }
-    catch (e) { console.warn("Supabase save failed, kept local copy", e); }
+    // A coordinator write. Let a failure propagate so the caller can surface it
+    // and NOT treat an unsaved change as done. sbSave already refreshes the
+    // session and retries once on a 401 before giving up.
+    await sbSave(records);
+    return true;
   }
   if (hasHostStore()) {
     try { return !!(await window.storage.set(KEY, json, SHARED)); }
@@ -476,6 +504,7 @@ export default function App() {
   const [showApproved, setShowApproved] = useState(false);
   const [approvedOpen, setApprovedOpen] = useState({});
   const [linksAwaitingOnly, setLinksAwaitingOnly] = useState(false);
+  const [dashError, setDashError] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -520,6 +549,8 @@ export default function App() {
     const hp = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
     const sp = new URLSearchParams(window.location.search || "");
     const token = hp.get("access_token");
+    const refreshTok = hp.get("refresh_token");
+    const expiresIn = parseInt(hp.get("expires_in") || "3600", 10);
     const type = hp.get("type") || sp.get("type");
     const err = hp.get("error_description") || hp.get("error") || sp.get("error_description") || sp.get("error");
     const confirmed = type === "signup";
@@ -531,7 +562,7 @@ export default function App() {
     } else if (token) {
       const email = (jwtEmail(token) || "").toLowerCase();
       if (email.endsWith("@" + ADMIN_EMAIL_DOMAIN)) {
-        setSession({ access_token: token, email });
+        setSession({ access_token: token, refresh_token: refreshTok, expires_at: nowSec() + expiresIn, email });
         setReviewer(email); setAuthed(true); setTab("dashboard");
       } else {
         setTab("dashboard");
@@ -547,7 +578,20 @@ export default function App() {
     try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
   }, []);
 
-  const persist = async (next) => { setRecords(next); await saveRecords(next); };
+  // Save a change to the directory. Optimistically updates the screen, then
+  // writes to the database. If the write fails (e.g. the session lapsed and
+  // can't be refreshed), revert the screen and surface an error rather than
+  // leaving the coordinator believing a change was saved. Returns true on success.
+  const persist = async (next) => {
+    const prev = records;
+    setRecords(next);
+    try { await saveRecords(next); setDashError(""); return true; }
+    catch (e) {
+      setRecords(prev);
+      setDashError("That change didn't save — your sign-in may have expired. Please sign out, sign back in, and try again.");
+      return false;
+    }
+  };
   const ministries = useMemo(() => records.filter((r) => r.kind === "ministry").sort((a, b) => a.name.localeCompare(b.name)), [records]);
   const deptsOf = (mid) => records.filter((r) => r.parentId === mid).sort((a, b) => a.name.localeCompare(b.name));
   const selected = useMemo(() => records.find((r) => r.id === selectedId) || null, [records, selectedId]);
@@ -814,19 +858,23 @@ export default function App() {
     audit: [auditEntry("submitted", r.repName), auditEntry("approved", reviewer)],
   });
   const approveSub = async (r) => {
-    await persist(r.isNew ? [...records, buildNewRecord(r)] : applyApproval(r, records));
+    // Only remove the submission from the queue once the directory write has
+    // actually landed — otherwise the approval would be silently lost.
+    const ok = await persist(r.isNew ? [...records, buildNewRecord(r)] : applyApproval(r, records));
+    if (!ok) return;
     try { await sbSetSubmissionStatus(r.submissionId, "approved"); } catch (e) { console.warn("Mark approved failed", e); }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
   const rejectSub = async (r) => {
-    try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); }
+    try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); setDashError("That didn't save — your sign-in may have expired. Please sign out, sign back in, and try again."); return; }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
   const approveAllSubs = async () => {
     if (!window.confirm("Approve all pending submissions? Their submitted details become the official record.")) return;
     let next = records;
     for (const r of pendingList) next = r.isNew ? [...next, buildNewRecord(r)] : applyApproval(r, next);
-    await persist(next);
+    const ok = await persist(next);
+    if (!ok) return;
     try { await Promise.all(pendingList.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
     setPendingSubs([]);
   };
@@ -841,7 +889,7 @@ export default function App() {
     try {
       const s = await sbSignIn(email, signForm.password);
       if (!s.access_token) throw new Error("Sign-in failed");
-      setSession(s); setReviewer(s.email); setAuthed(true); setSignError(""); setSignForm({ email: "", password: "" });
+      setSession(s); setReviewer(s.email); setAuthed(true); setSignError(""); setDashError(""); setSignForm({ email: "", password: "" });
     } catch (e) { setSignError(e.message || "Sign-in failed"); }
     setSigningIn(false);
   };
@@ -854,7 +902,7 @@ export default function App() {
     try {
       const s = await sbSignUp(email, signForm.password);
       if (s.needsConfirm) { setSignError(""); setSignNotice("Account created. Check your email to confirm it, then sign in."); }
-      else { setSession({ access_token: s.access_token, email: s.email }); setReviewer(s.email); setAuthed(true); setSignError(""); setSignForm({ email: "", password: "" }); }
+      else { setSession({ access_token: s.access_token, refresh_token: s.refresh_token, expires_at: s.expires_at, email: s.email }); setReviewer(s.email); setAuthed(true); setSignError(""); setSignForm({ email: "", password: "" }); }
     } catch (e) { setSignError(e.message || "Sign-up failed"); }
     setSigningIn(false);
   };
@@ -1306,6 +1354,7 @@ export default function App() {
               <div><h2>Coordinator Dashboard</h2><p>Track responses, review submissions, and publish approved changes.</p></div>
               <div className="dash-tools"><span className="signed-as"><Users size={14} /> {reviewer}</span><button className="btn ghost sm" onClick={exportCsv}>Export CSV</button><button className="btn ghost sm" onClick={downloadDirectory}>Export JSON</button><button className="btn ghost sm danger" onClick={resetAll}>Reset</button><button className="btn ghost sm" onClick={signOut}>Sign out</button></div>
             </div>
+            {dashError && <div className="dash-error" role="alert"><span>{dashError}</span><button type="button" className="dash-error-x" onClick={() => setDashError("")}>Dismiss</button></div>}
             <nav className="subtabs">
               <button className={dashView === "overview" ? "subtab on" : "subtab"} onClick={() => setDashView("overview")}>Overview</button>
               <button className={dashView === "review" ? "subtab on" : "subtab"} onClick={() => setDashView("review")}>Pending review{pendingList.length ? <span className="pill">{pendingList.length}</span> : null}</button>
@@ -1772,6 +1821,9 @@ textarea { resize:vertical; }
 .dash-head { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; }
 .dash-head h2 { font-size:28px; } .dash-head p { color:var(--muted); margin:6px 0 0; font-size:16px; }
 .dash-tools { display:flex; gap:8px; }
+.dash-error { display:flex; align-items:center; gap:12px; margin-top:16px; padding:12px 14px; background:#fbf2f2; border:1px solid var(--danger); border-left-width:4px; border-radius:var(--radius-md); color:var(--danger); font-size:14.5px; font-weight:500; }
+.dash-error span { flex:1 1 auto; }
+.dash-error-x { flex:0 0 auto; background:none; border:0; color:var(--danger); font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; }
 .progress-wrap { margin:22px 0 18px; }
 .progress-row { display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:7px; }
 .progress { height:9px; background:var(--line); border-radius:20px; overflow:hidden; }
