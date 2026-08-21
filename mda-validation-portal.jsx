@@ -505,6 +505,9 @@ export default function App() {
   const [approvedOpen, setApprovedOpen] = useState({});
   const [linksAwaitingOnly, setLinksAwaitingOnly] = useState(false);
   const [dashError, setDashError] = useState("");
+  const [dashNotice, setDashNotice] = useState("");
+  const [showProposed, setShowProposed] = useState(false);
+  const [proposedOpen, setProposedOpen] = useState({});
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -625,9 +628,15 @@ export default function App() {
           audit: [{ t: p.submittedAt, kind: "submitted", actor: p.repName, email: p.repEmail, ref: s.ref }],
         };
       }
-      const rec = records.find((r) => r.id === s.org_id) || {};
+      // Resolve the organisation by id, then fall back to its slug or name, so a
+      // submission still finds its record even if ids changed after a re-import.
+      let rec = records.find((r) => r.id === s.org_id);
+      if (!rec && s.org_slug) rec = records.find((r) => slugify(r.name) === s.org_slug);
+      if (!rec && s.org_name) rec = records.find((r) => (r.name || "").trim().toLowerCase() === s.org_name.trim().toLowerCase());
+      const targetMissing = !rec;
+      rec = rec || {};
       return {
-        id: s.org_id, submissionId: s.id, submissionRef: s.ref,
+        id: rec.id || s.org_id, targetMissing, submissionId: s.id, submissionRef: s.ref,
         name: s.org_name || rec.name, kind: s.kind || rec.kind, parentId: rec.parentId,
         currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress, roles: rec.roles || [],
         validatedPhone: p.phone, validatedEmail: p.email, validatedAddress: p.address, validatedRoles: p.roles || [],
@@ -645,16 +654,20 @@ export default function App() {
   const recPath = (r) => recParts(r).join(" › ");
   // The top-level ministry (or top-level body) a record sits under.
   const rootOf = (r) => { let cur = r, g = 0; while (cur.parentId && recById[cur.parentId] && g++ < 6) cur = recById[cur.parentId]; return cur; };
-  // Approved records grouped under their top-level ministry, alphabetical.
-  const approvedGroups = useMemo(() => {
+  // Group a set of records under their top-level ministry, alphabetical.
+  const groupByMinistry = (list) => {
     const groups = new Map();
-    for (const r of approvedList) {
+    for (const r of list) {
       const root = rootOf(r);
       if (!groups.has(root.id)) groups.set(root.id, { id: root.id, name: root.name, rows: [] });
       groups.get(root.id).rows.push(r);
     }
     return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [approvedList, records]);
+  };
+  const approvedGroups = useMemo(() => groupByMinistry(approvedList), [approvedList, records]);
+  // Organisations added to the directory from an approved "new" proposal.
+  const proposedList = useMemo(() => records.filter((r) => r.origin === "proposal"), [records]);
+  const proposedGroups = useMemo(() => groupByMinistry(proposedList), [proposedList, records]);
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
   const slugMap = useMemo(() => {
@@ -851,19 +864,31 @@ export default function App() {
     reviewedAt: new Date().toISOString(), reviewedBy: (reviewer || "").trim(),
     audit: [...(x.audit || []), auditEntry("approved", reviewer)],
   } : x);
-  // Turn an approved "new" proposal into a real (blank, awaiting) record.
+  // Turn an approved "new" proposal into a real (blank, awaiting) record, tagged
+  // as newly added so the dashboard can list these organisations and who proposed them.
   const buildNewRecord = (r) => ({
     id: newId(), kind: r.proposedKind || "department", name: r.proposedName, parentId: r.parentId,
     currentPhone: "", currentEmail: "", currentAddress: "", roles: [], ...valDefaults(),
+    origin: "proposal", proposedBy: r.repName || "", proposedByEmail: r.repEmail || "",
+    proposedAt: r.submittedAt || new Date().toISOString(), addedBy: (reviewer || "").trim(), addedAt: new Date().toISOString(),
     audit: [auditEntry("submitted", r.repName), auditEntry("approved", reviewer)],
   });
   const approveSub = async (r) => {
+    // A validation whose organisation can no longer be found must not be silently
+    // dropped — tell the coordinator instead of losing the approval.
+    if (!r.isNew && r.targetMissing) {
+      setDashError(`Couldn't approve "${r.name}" — that organisation is no longer in the directory (it may have been removed or re-imported). The submission has been kept in the queue.`);
+      return;
+    }
     // Only remove the submission from the queue once the directory write has
     // actually landed — otherwise the approval would be silently lost.
     const ok = await persist(r.isNew ? [...records, buildNewRecord(r)] : applyApproval(r, records));
     if (!ok) return;
     try { await sbSetSubmissionStatus(r.submissionId, "approved"); } catch (e) { console.warn("Mark approved failed", e); }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
+    setDashNotice(r.isNew
+      ? `Added “${r.name}”${r.parentName ? ` under ${r.parentName}` : ""} — it's now in the directory awaiting validation.`
+      : `Approved “${r.name}” — it's now the official record.`);
   };
   const rejectSub = async (r) => {
     try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); setDashError("That didn't save — your sign-in may have expired. Please sign out, sign back in, and try again."); return; }
@@ -871,12 +896,17 @@ export default function App() {
   };
   const approveAllSubs = async () => {
     if (!window.confirm("Approve all pending submissions? Their submitted details become the official record.")) return;
+    // Skip any validation whose organisation can't be found; approve the rest.
+    const doable = pendingList.filter((r) => r.isNew || !r.targetMissing);
+    const skipped = pendingList.length - doable.length;
     let next = records;
-    for (const r of pendingList) next = r.isNew ? [...next, buildNewRecord(r)] : applyApproval(r, next);
+    for (const r of doable) next = r.isNew ? [...next, buildNewRecord(r)] : applyApproval(r, next);
     const ok = await persist(next);
     if (!ok) return;
-    try { await Promise.all(pendingList.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
-    setPendingSubs([]);
+    try { await Promise.all(doable.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
+    const doneIds = new Set(doable.map((r) => r.submissionId));
+    setPendingSubs((subs) => subs.filter((s) => !doneIds.has(s.id)));
+    setDashNotice(`Approved ${doable.length} submission${doable.length === 1 ? "" : "s"}.${skipped ? ` ${skipped} skipped — their organisation could not be found.` : ""}`);
   };
 
   const validAdminEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.toLowerCase().endsWith("@" + ADMIN_EMAIL_DOMAIN);
@@ -966,8 +996,17 @@ export default function App() {
     setEditId(null); setEditFields(null);
   };
   const resetAll = async () => {
-    if (!window.confirm("Reset everything to the imported ministry and department list? This clears every validation.")) return;
-    await persist(buildSeed()); setRowOpen(null); setDashOpen({});
+    if (!window.confirm(
+      "Reset the WHOLE directory back to the built-in starter list?\n\n" +
+      "This is destructive and rarely what you want. It will:\n" +
+      "• delete every organisation added since (including approved ones and new bodies),\n" +
+      "• erase all validations and submitter details, and\n" +
+      "• regenerate every record's id — which breaks validation links you've already shared and orphans anything still in the review queue.\n\n" +
+      "Only do this to wipe test data on a fresh setup. Type of last resort — are you sure?"
+    )) return;
+    if (!window.confirm("Final check: this permanently replaces all current data with the starter list. Continue?")) return;
+    const ok = await persist(buildSeed());
+    if (ok) { setRowOpen(null); setDashOpen({}); setDashNotice("Directory reset to the starter list."); }
   };
   const exportCsv = () => {
     const head = ["Type", "Parent Ministry", "Organisation", "Status", "Submission", "Official Phone", "Official Email", "Official Address", "Submitted Phone", "Submitted Email", "Submitted Address", "Roles", "Validated By", "Title", "Contact Email", "Submitted At", "Reviewed By", "Reviewed At", "Notes", "Audit Trail"];
@@ -1355,6 +1394,7 @@ export default function App() {
               <div className="dash-tools"><span className="signed-as"><Users size={14} /> {reviewer}</span><button className="btn ghost sm" onClick={exportCsv}>Export CSV</button><button className="btn ghost sm" onClick={downloadDirectory}>Export JSON</button><button className="btn ghost sm danger" onClick={resetAll}>Reset</button><button className="btn ghost sm" onClick={signOut}>Sign out</button></div>
             </div>
             {dashError && <div className="dash-error" role="alert"><span>{dashError}</span><button type="button" className="dash-error-x" onClick={() => setDashError("")}>Dismiss</button></div>}
+            {dashNotice && <div className="dash-notice" role="status"><span>{dashNotice}</span><button type="button" className="dash-error-x" onClick={() => setDashNotice("")}>Dismiss</button></div>}
             <nav className="subtabs">
               <button className={dashView === "overview" ? "subtab on" : "subtab"} onClick={() => setDashView("overview")}>Overview</button>
               <button className={dashView === "review" ? "subtab on" : "subtab"} onClick={() => setDashView("review")}>Pending review{pendingList.length ? <span className="pill">{pendingList.length}</span> : null}</button>
@@ -1402,7 +1442,64 @@ export default function App() {
             })()}
 
             <div className="progress-wrap"><div className="progress-row"><span>{stats.done} of {stats.total} responded</span><span>{stats.pct}%</span></div><div className="progress"><div className="progress-fill" style={{ width: `${stats.pct}%` }} /></div></div>
-            <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" onClick={() => setShowApproved((v) => !v)} active={showApproved} /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
+            <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" onClick={() => setShowApproved((v) => !v)} active={showApproved} /><Stat n={proposedList.length} label="New organisations" cls="new" onClick={() => setShowProposed((v) => !v)} active={showProposed} /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
+            {showProposed && (
+              <div className="approved-panel">
+                <div className="approved-head">
+                  <h3>New organisations added <span className="approved-count">{proposedList.length}</span></h3>
+                  {proposedList.length > 0 && (() => {
+                    const allOpen = proposedGroups.every((g) => proposedOpen[g.id]);
+                    return (
+                      <div className="approved-head-tools">
+                        <button className="btn ghost sm" onClick={() => { if (allOpen) { setProposedOpen({}); } else { const n = {}; proposedGroups.forEach((g) => { n[g.id] = true; }); setProposedOpen(n); } }}>{allOpen ? "Collapse all" : "Expand all"}</button>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <p className="panel-intro">Organisations added to the directory from an approved “add a missing body” request. Each starts blank and awaiting validation.</p>
+                {proposedList.length === 0 ? (
+                  <div className="empty">No organisations have been added from requests yet.</div>
+                ) : (
+                  <div className="approved-accordion">
+                    {proposedGroups.map((g) => {
+                      const open = !!proposedOpen[g.id];
+                      return (
+                        <div key={g.id} className={`approved-group${open ? " open" : ""}`}>
+                          <button type="button" className="approved-group-head" aria-expanded={open} onClick={() => setProposedOpen((o) => ({ ...o, [g.id]: !o[g.id] }))}>
+                            <ChevronRight size={16} className={`chev${open ? " rot" : ""}`} />
+                            <span className="approved-group-name">{g.name}</span>
+                            <span className="approved-group-n">{g.rows.length}</span>
+                          </button>
+                          {open && (
+                            <div className="approved-table-wrap">
+                              <table className="approved-table">
+                                <thead><tr><th>Organisation</th><th>Proposed by</th><th>Email</th><th>Added by</th><th>Added</th><th>Status</th></tr></thead>
+                                <tbody>
+                                  {g.rows.map((r) => {
+                                    const parts = recParts(r);
+                                    const label = parts.length <= 1 ? r.name : parts.slice(1).join(" › ");
+                                    return (
+                                      <tr key={r.id}>
+                                        <td>{label}</td>
+                                        <td>{r.proposedBy || <span className="muted">—</span>}</td>
+                                        <td>{r.proposedByEmail ? <a href={`mailto:${r.proposedByEmail}`}>{r.proposedByEmail}</a> : <span className="muted">—</span>}</td>
+                                        <td>{r.addedBy || <span className="muted">—</span>}</td>
+                                        <td className="nowrap">{r.addedAt ? fmtDate(r.addedAt) : "—"}</td>
+                                        <td><span className={`link-status ${r.status === "approved" ? "responded" : "awaiting"}`}>{r.status === "approved" ? "Validated" : "Awaiting"}</span></td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             {showApproved && (
               <div className="approved-panel">
                 <div className="approved-head">
@@ -1823,15 +1920,20 @@ textarea { resize:vertical; }
 .dash-tools { display:flex; gap:8px; }
 .dash-error { display:flex; align-items:center; gap:12px; margin-top:16px; padding:12px 14px; background:#fbf2f2; border:1px solid var(--danger); border-left-width:4px; border-radius:var(--radius-md); color:var(--danger); font-size:14.5px; font-weight:500; }
 .dash-error span { flex:1 1 auto; }
-.dash-error-x { flex:0 0 auto; background:none; border:0; color:var(--danger); font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; }
+.dash-error-x { flex:0 0 auto; background:none; border:0; color:inherit; font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; }
+.dash-notice { display:flex; align-items:center; gap:12px; margin-top:16px; padding:12px 14px; background:#e7f4ea; border:1px solid var(--confirmed); border-left-width:4px; border-radius:var(--radius-md); color:#1b5e33; font-size:14.5px; font-weight:500; }
+.dash-notice span { flex:1 1 auto; }
 .progress-wrap { margin:22px 0 18px; }
 .progress-row { display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:7px; }
 .progress { height:9px; background:var(--line); border-radius:20px; overflow:hidden; }
 .progress-fill { height:100%; background:linear-gradient(90deg,var(--gold),var(--gold-soft)); border-radius:20px; transition:width .5s ease; }
-.stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:22px; }
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:22px; }
 .stat { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:16px; text-align:center; }
 .stat-n { font-family:'Figtree',system-ui,sans-serif; font-size:30px; font-weight:700; line-height:1; } .stat-l { font-size:12.5px; color:var(--muted); margin-top:6px; }
-.stat-pending .stat-n{color:var(--pending);} .stat-confirmed .stat-n{color:var(--confirmed);} .stat-updated .stat-n{color:var(--updated);} .stat-total .stat-n{color:var(--navy);}
+.stat-pending .stat-n{color:var(--pending);} .stat-confirmed .stat-n{color:var(--confirmed);} .stat-updated .stat-n{color:var(--updated);} .stat-total .stat-n{color:var(--navy);} .stat-new .stat-n{color:var(--govbb-teal-00);}
+.stat-new.stat-active { border-color:var(--govbb-teal-00); box-shadow:0 0 0 1px var(--govbb-teal-00); }
+.stat-new .stat-caret { color:var(--govbb-teal-00); }
+.panel-intro { color:var(--muted); font-size:13.5px; margin:0 0 14px; }
 .stat-btn { cursor:pointer; font-family:inherit; position:relative; transition:border-color .12s, box-shadow .12s; }
 .stat-btn:hover { border-color:var(--confirmed); }
 .stat-active { border-color:var(--confirmed); box-shadow:0 0 0 1px var(--confirmed); }
