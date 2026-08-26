@@ -1414,7 +1414,7 @@ export default function App() {
             <nav className="subtabs">
               <button className={dashView === "overview" ? "subtab on" : "subtab"} onClick={() => setDashView("overview")}>Overview</button>
               <button className={dashView === "review" ? "subtab on" : "subtab"} onClick={() => setDashView("review")}>Pending review{pendingList.length ? <span className="pill">{pendingList.length}</span> : null}</button>
-              <button className={dashView === "howto" ? "subtab on" : "subtab"} onClick={() => setDashView("howto")}>How to</button>
+              <button className={dashView === "howto" ? "subtab on" : "subtab"} onClick={() => setDashView("howto")}>Guide</button>
             </nav>
 
             {dashView === "overview" && <div className="dash-view fade">
@@ -1751,6 +1751,19 @@ export default function App() {
                 </section>
 
                 <section className="howto-item">
+                  <h3>What the numbers mean</h3>
+                  <p>The Overview shows where things stand. Select a number to see the list behind it.</p>
+                  <ul className="howto-defs">
+                    <li><strong>Awaiting.</strong> Not yet confirmed by anyone.</li>
+                    <li><strong>Pending review.</strong> Submitted, and waiting for you to approve.</li>
+                    <li><strong>Approved.</strong> Confirmed and published as the official record.</li>
+                    <li><strong>New organisations.</strong> Bodies added from a request to add a missing body.</li>
+                    <li><strong>Total bodies.</strong> Everything in the directory.</li>
+                    <li><strong>Archived.</strong> Bodies you have hidden. Kept, but not shown in any list. This appears only when something is archived.</li>
+                  </ul>
+                </section>
+
+                <section className="howto-item">
                   <h3>Review a submission</h3>
                   <ol>
                     <li>Open the <strong>Pending review</strong> tab. The number shows how many are waiting.</li>
@@ -1762,8 +1775,20 @@ export default function App() {
                 </section>
 
                 <section className="howto-item">
+                  <h3>Send a submission back</h3>
+                  <p>Select <strong>Send back</strong> if the details look wrong. This takes the submission out of your queue and marks it returned.</p>
+                  <p>The representative is not emailed automatically. If you want them to try again, contact them yourself, or use <strong>Copy invite</strong> to send their link once more.</p>
+                </section>
+
+                <section className="howto-item">
                   <h3>Add a body someone has proposed</h3>
                   <p>If a representative says a department or facility is missing, it arrives in <strong>Pending review</strong> as a request to add. Select <strong>Approve &amp; add</strong> to put it in the directory. It starts blank and awaiting validation, ready for its details to be confirmed. You will find every added body under the <strong>New organisations</strong> card on the Overview.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Add a body yourself</h3>
+                  <p>You do not have to wait for a request. On the Overview, use the box at the top: type the name, choose where it sits (as a ministry, or under an existing ministry or department), then select <strong>Add</strong>.</p>
+                  <p>It joins the directory awaiting validation, ready for its details to be confirmed.</p>
                 </section>
 
                 <section className="howto-item">
@@ -1790,6 +1815,11 @@ export default function App() {
                 <section className="howto-item">
                   <h3>If a change does not save</h3>
                   <p>You will see a message if a change does not save. This usually means your sign-in has expired. <strong>Sign out, sign back in, then try again.</strong> Your change is not lost. It stays in the queue until it saves.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Get help</h3>
+                  <p>If something is not working, or you are not sure what to do, contact the GovTech digital team at <strong>[add email or channel]</strong>.</p>
                 </section>
               </div>
             </div>}
@@ -2124,6 +2154,8 @@ textarea { resize:vertical; }
 .howto-item p:last-child { margin-bottom:0; }
 .howto-item ol { margin:0 0 10px; padding-left:22px; }
 .howto-item ol li { font-size:16px; line-height:1.6; margin:6px 0; max-width:68ch; }
+.howto-defs { list-style:none; margin:0 0 10px; padding:0; }
+.howto-defs li { font-size:16px; line-height:1.6; margin:8px 0; max-width:70ch; }
 .howto-item strong { color:var(--ink); font-weight:600; }
 .overview-tools { display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
