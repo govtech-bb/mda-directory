@@ -1514,7 +1514,7 @@ export default function App() {
                           {open && (
                             <div className="approved-table-wrap">
                               <table className="approved-table">
-                                <thead><tr><th>Organisation</th><th>Proposed by</th><th>Email</th><th>Added by</th><th>Added</th><th>Status</th></tr></thead>
+                                <thead><tr><th>Organisation</th><th>Proposed by</th><th>Email</th><th>Added by</th><th>Added</th><th>Status</th><th></th></tr></thead>
                                 <tbody>
                                   {g.rows.map((r) => {
                                     const parts = recParts(r);
@@ -1527,6 +1527,7 @@ export default function App() {
                                         <td>{r.addedBy || <span className="muted">—</span>}</td>
                                         <td className="nowrap">{r.addedAt ? fmtDate(r.addedAt) : "—"}</td>
                                         <td><span className={`link-status ${r.status === "approved" ? "responded" : "awaiting"}`}>{r.status === "approved" ? "Validated" : "Awaiting"}</span></td>
+                                        <td><button className="btn ghost sm" onClick={() => archiveRecord(r)}>Archive</button></td>
                                       </tr>
                                     );
                                   })}
