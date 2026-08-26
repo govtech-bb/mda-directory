@@ -508,6 +508,7 @@ export default function App() {
   const [dashNotice, setDashNotice] = useState("");
   const [showProposed, setShowProposed] = useState(false);
   const [proposedOpen, setProposedOpen] = useState({});
+  const [showArchived, setShowArchived] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
   const [dashView, setDashView] = useState("overview"); // overview | review | publish
@@ -595,8 +596,9 @@ export default function App() {
       return false;
     }
   };
-  const ministries = useMemo(() => records.filter((r) => r.kind === "ministry").sort((a, b) => a.name.localeCompare(b.name)), [records]);
-  const deptsOf = (mid) => records.filter((r) => r.parentId === mid).sort((a, b) => a.name.localeCompare(b.name));
+  // Archived records are hidden from every list but kept in the data (soft delete).
+  const ministries = useMemo(() => records.filter((r) => r.kind === "ministry" && !r.archived).sort((a, b) => a.name.localeCompare(b.name)), [records]);
+  const deptsOf = (mid) => records.filter((r) => r.parentId === mid && !r.archived).sort((a, b) => a.name.localeCompare(b.name));
   const selected = useMemo(() => records.find((r) => r.id === selectedId) || null, [records, selectedId]);
   const parentOf = (rec) => (rec && rec.parentId ? records.find((r) => r.id === rec.parentId) : null);
   const rolesShown = (r) => (r.validatedRoles && r.validatedRoles.length ? r.validatedRoles : (r.roles || []));
@@ -606,8 +608,9 @@ export default function App() {
     return { total: rows.length, done: rows.filter((r) => r.status !== "awaiting").length };
   };
   const stats = useMemo(() => {
-    const total = records.length;
-    const approved = records.filter((r) => r.status === "approved").length;
+    const live = records.filter((r) => !r.archived);
+    const total = live.length;
+    const approved = live.filter((r) => r.status === "approved").length;
     const pending = pendingSubs.length;
     const awaiting = total - approved;
     const done = approved;
@@ -646,7 +649,8 @@ export default function App() {
       };
     });
   }, [pendingSubs, records]);
-  const approvedList = useMemo(() => records.filter((r) => r.status === "approved"), [records]);
+  const approvedList = useMemo(() => records.filter((r) => r.status === "approved" && !r.archived), [records]);
+  const archivedList = useMemo(() => records.filter((r) => r.archived), [records]);
   const recById = useMemo(() => Object.fromEntries(records.map((r) => [r.id, r])), [records]);
   // Name segments from the top-level ministry down to this record.
   const recParts = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts; };
@@ -666,7 +670,7 @@ export default function App() {
   };
   const approvedGroups = useMemo(() => groupByMinistry(approvedList), [approvedList, records]);
   // Organisations added to the directory from an approved "new" proposal.
-  const proposedList = useMemo(() => records.filter((r) => r.origin === "proposal"), [records]);
+  const proposedList = useMemo(() => records.filter((r) => r.origin === "proposal" && !r.archived), [records]);
   const proposedGroups = useMemo(() => groupByMinistry(proposedList), [proposedList, records]);
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
@@ -979,6 +983,18 @@ export default function App() {
     await persist(records.filter((r) => !removeIds.has(r.id)));
     if (rowOpen === id) setRowOpen(null);
   };
+  // Archive = soft delete. Hidden from every list but kept in the data with a
+  // reason, and restorable. Use this for duplicates and bodies added in error.
+  const archiveRecord = async (r) => {
+    const reason = window.prompt(`Archive “${r.name}”?\n\nGive a short reason (for example: duplicate of Barbados National Standards Institution). It will be hidden from the directory but not deleted — you can restore it later.`, "");
+    if (reason === null) return;
+    const ok = await persist(records.map((x) => x.id === r.id ? { ...x, archived: true, archivedReason: reason.trim(), archivedBy: (reviewer || "").trim(), archivedAt: new Date().toISOString(), audit: [...(x.audit || []), auditEntry("archived", reviewer)] } : x));
+    if (ok) { if (rowOpen === r.id) setRowOpen(null); setDashNotice(`Archived “${r.name}”. It's hidden from the directory but not deleted — find it under Archived to restore it.`); }
+  };
+  const restoreRecord = async (r) => {
+    const ok = await persist(records.map((x) => x.id === r.id ? { ...x, archived: false, archivedReason: "", archivedBy: "", archivedAt: null, audit: [...(x.audit || []), auditEntry("restored", reviewer)] } : x));
+    if (ok) setDashNotice(`Restored “${r.name}” to the directory.`);
+  };
   const startEdit = (rec) => { setEditId(rec.id); setEditFields({ name: rec.name, currentPhone: rec.currentPhone, currentEmail: rec.currentEmail, currentAddress: rec.currentAddress, repName: rec.repName || "", repTitle: rec.repTitle || "", repEmail: rec.repEmail || "" }); };
   const saveEdit = async () => {
     const r0 = records.find((r) => r.id === editId);
@@ -1012,12 +1028,12 @@ export default function App() {
     const head = ["Type", "Parent Ministry", "Organisation", "Status", "Submission", "Official Phone", "Official Email", "Official Address", "Submitted Phone", "Submitted Email", "Submitted Address", "Roles", "Validated By", "Title", "Contact Email", "Submitted At", "Reviewed By", "Reviewed At", "Notes", "Audit Trail"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const auditStr = (a) => (a || []).map((e) => {
-      const k = { submitted: "submitted", approved: "approved", returned: "sent back", edited: "on-file edited" }[e.kind] || e.kind;
+      const k = { submitted: "submitted", approved: "approved", returned: "sent back", edited: "on-file edited", archived: "archived", restored: "restored" }[e.kind] || e.kind;
       const base = `${new Date(e.t).toLocaleString()} ${k}${e.actor ? ` by ${e.actor}` : ""}`;
       const ch = (e.changes || []).map((c) => c.action === "corrected" ? `${c.field} corrected (${c.from || "—"} → ${c.to || "—"})` : `${c.field} ${c.action}`).join("; ");
       return ch ? `${base}: ${ch}` : base;
     }).join(" | ");
-    const rows = records.map((r) => {
+    const rows = records.filter((r) => !r.archived).map((r) => {
       const parent = r.parentId ? (records.find((p) => p.id === r.parentId)?.name || "") : "";
       const roleStr = rolesShown(r).map((x) => `${x.r}: ${x.t}`).join("; ");
       return [r.kind, parent, r.name, STATUS_META[r.status]?.label || r.status, r.submissionType, r.currentPhone, r.currentEmail, r.currentAddress, r.validatedPhone, r.validatedEmail, r.validatedAddress, roleStr, r.repName, r.repTitle, r.repEmail, r.submittedAt ? new Date(r.submittedAt).toLocaleString() : "", r.reviewedBy, r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : "", r.notes, auditStr(r.audit)].map(esc).join(",");
@@ -1401,7 +1417,32 @@ export default function App() {
             </nav>
 
             {dashView === "overview" && <div className="dash-view fade">
-            <div className="overview-tools"><button className={showLinks ? "btn primary sm" : "btn ghost sm"} onClick={() => setShowLinks((v) => !v)}><Link2 size={15} /> Validation links</button></div>
+            <div className="overview-tools">
+              {archivedList.length > 0 && <button className={showArchived ? "btn primary sm" : "btn ghost sm"} onClick={() => setShowArchived((v) => !v)}>Archived ({archivedList.length})</button>}
+              <button className={showLinks ? "btn primary sm" : "btn ghost sm"} onClick={() => setShowLinks((v) => !v)}><Link2 size={15} /> Validation links</button>
+            </div>
+            {showArchived && archivedList.length > 0 && (
+              <div className="approved-panel">
+                <div className="approved-head"><h3>Archived organisations <span className="approved-count">{archivedList.length}</span></h3></div>
+                <p className="panel-intro">Hidden from the directory and all lists, but not deleted. Restore any entry to bring it back.</p>
+                <div className="approved-table-wrap">
+                  <table className="approved-table">
+                    <thead><tr><th>Organisation</th><th>Reason</th><th>Archived by</th><th>Archived</th><th></th></tr></thead>
+                    <tbody>
+                      {archivedList.map((r) => (
+                        <tr key={r.id}>
+                          <td>{recPath(r)}</td>
+                          <td>{r.archivedReason ? `“${r.archivedReason}”` : <span className="muted">—</span>}</td>
+                          <td>{r.archivedBy || <span className="muted">—</span>}</td>
+                          <td className="nowrap">{r.archivedAt ? fmtDate(r.archivedAt) : "—"}</td>
+                          <td><button className="btn ghost sm" onClick={() => restoreRecord(r)}>Restore</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {showLinks && (() => {
               const lq = linkSearch.trim().toLowerCase();
@@ -1614,7 +1655,7 @@ export default function App() {
                                     <div className="meta"><span>{r.repName ? `Submitted by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : "No submission yet"}{r.reviewedBy ? ` · reviewed by ${r.reviewedBy}` : ""}</span><span>{r.submittedAt ? fmtDate(r.submittedAt) : ""}</span></div>
                                     {r.notes && <div className="meta-notes">“{r.notes}”</div>}
                                     <AuditTrail entries={r.audit} />
-                                    <div className="drow-tools"><button className="btn ghost sm" onClick={() => copyText(linkFor(r), "row-" + r.id)}>{copiedKey === "row-" + r.id ? <><Check size={14} /> Link copied</> : <><Link2 size={14} /> Copy link</>}</button><button className="btn ghost sm" onClick={() => startEdit(r)}><PencilLine size={14} /> Edit on-file details</button><button className="btn ghost sm danger" onClick={() => removeRecord(r.id)}><Trash2 size={14} /> Remove</button></div>
+                                    <div className="drow-tools"><button className="btn ghost sm" onClick={() => copyText(linkFor(r), "row-" + r.id)}>{copiedKey === "row-" + r.id ? <><Check size={14} /> Link copied</> : <><Link2 size={14} /> Copy link</>}</button><button className="btn ghost sm" onClick={() => startEdit(r)}><PencilLine size={14} /> Edit on-file details</button><button className="btn ghost sm" onClick={() => archiveRecord(r)}>Archive</button><button className="btn ghost sm danger" onClick={() => removeRecord(r.id)}><Trash2 size={14} /> Remove</button></div>
                                   </>
                                 )}
                               </div>
@@ -1739,7 +1780,7 @@ function Stat({ n, label, cls, onClick, active }) {
 }
 function AuditTrail({ entries }) {
   if (!entries || !entries.length) return null;
-  const KIND = { submitted: "Submitted for review", approved: "Approved", returned: "Sent back for changes", edited: "On-file details edited" };
+  const KIND = { submitted: "Submitted for review", approved: "Approved", returned: "Sent back for changes", edited: "On-file details edited", archived: "Archived", restored: "Restored" };
   const fmt = (iso) => { try { return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return ""; } };
   const list = [...entries].reverse();
   return (
@@ -2014,7 +2055,7 @@ textarea { resize:vertical; }
 .pill { background:var(--updated-bg); color:var(--updated); font-size:11px; font-weight:700; border-radius:var(--govbb-radius); padding:1px 7px; }
 .subtab.on .pill { background:var(--govbb-teal-00); color:#fff; }
 .dash-view { padding-top:18px; }
-.overview-tools { display:flex; justify-content:flex-end; margin-bottom:8px; }
+.overview-tools { display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
 .review-tools { display:flex; align-items:flex-end; gap:9px; }
