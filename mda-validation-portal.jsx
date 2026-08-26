@@ -1737,59 +1737,59 @@ export default function App() {
 
             {dashView === "howto" && <div className="dash-view fade">
               <div className="howto">
-                <p className="howto-intro">A short guide to reviewing submissions and keeping the directory accurate. If you get stuck, contact the digital team.</p>
+                <p className="howto-intro">Use this dashboard to keep the official contact details for every government body accurate. This guide covers the main tasks. If you get stuck, contact the GovTech digital team.</p>
 
                 <section className="howto-item">
-                  <h3>What you do here</h3>
-                  <p>Representatives from each ministry, department and agency confirm or correct their own contact details. Your job is to review what they submit and publish the approved record. Nothing a representative submits goes live until you approve it.</p>
+                  <h3>Your role</h3>
+                  <p>Representatives from each ministry, department and agency confirm or correct their own contact details. You review what they submit and publish the approved record. Nothing a representative submits goes live until you approve it.</p>
                 </section>
 
                 <section className="howto-item">
                   <h3>Sign in</h3>
                   <p>Sign in with your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> email and password. Only {ADMIN_EMAIL_DOMAIN} accounts can review submissions or change the record.</p>
-                  <p>Forgotten your password? On the sign-in screen, select <strong>Forgotten your password?</strong>, enter your email, and follow the link we send you.</p>
+                  <p>If you have forgotten your password, select <strong>Forgotten your password</strong> on the sign-in screen, enter your email, then follow the link we send you.</p>
                 </section>
 
                 <section className="howto-item">
                   <h3>Review a submission</h3>
                   <ol>
-                    <li>Open the <strong>Pending review</strong> tab. A number shows how many are waiting.</li>
+                    <li>Open the <strong>Pending review</strong> tab. The number shows how many are waiting.</li>
                     <li>Read each card. It shows the current official details next to what was submitted, and highlights what changed.</li>
-                    <li>Select <strong>Approve</strong> to make the submitted details the official record, or <strong>Send back</strong> if something looks wrong.</li>
-                    <li>Need to fix a small detail yourself first? Select <strong>Edit corrections</strong>.</li>
+                    <li>Select <strong>Approve</strong> to make the submitted details the official record. Select <strong>Send back</strong> if something looks wrong.</li>
+                    <li>To fix a small detail yourself first, select <strong>Edit corrections</strong>.</li>
                   </ol>
-                  <p>You can clear the whole queue at once with <strong>Approve all</strong> — use it only when you've read each one.</p>
+                  <p>You can clear the whole queue at once with <strong>Approve all</strong>. Only do this once you have read each submission.</p>
                 </section>
 
                 <section className="howto-item">
                   <h3>Add a body someone has proposed</h3>
-                  <p>If a representative says a department or facility is missing, it arrives in <strong>Pending review</strong> as a request to add. Select <strong>Approve &amp; add</strong> to put it in the directory. It starts blank and awaiting validation, ready for its details to be confirmed. You'll find every added body under the <strong>New organisations</strong> card on the Overview.</p>
+                  <p>If a representative says a department or facility is missing, it arrives in <strong>Pending review</strong> as a request to add. Select <strong>Approve &amp; add</strong> to put it in the directory. It starts blank and awaiting validation, ready for its details to be confirmed. You will find every added body under the <strong>New organisations</strong> card on the Overview.</p>
                 </section>
 
                 <section className="howto-item">
-                  <h3>Edit details, and record who gave them</h3>
-                  <p>On the <strong>Overview</strong> tab, open a ministry, then open any organisation. Select <strong>Edit on-file details</strong> to change the name, phone, email or address. Under <strong>Who supplied these details</strong>, add the contact's name and email so the record shows who to thank and who to ask.</p>
+                  <h3>Edit details and record who gave them</h3>
+                  <p>On the <strong>Overview</strong> tab, open a ministry, then open any organisation. Select <strong>Edit on-file details</strong> to change the name, phone, email or address. Under <strong>Who supplied these details</strong>, add the contact's name and email so the record shows who confirmed it and who to ask.</p>
                 </section>
 
                 <section className="howto-item">
-                  <h3>See who has responded, and chase the rest</h3>
+                  <h3>See who has responded and chase the rest</h3>
                   <p>On the Overview, select <strong>Validation links</strong>. Each organisation shows <strong>Responded</strong> or <strong>Awaiting</strong>. Turn on <strong>Show only awaiting</strong> to see who still needs to reply.</p>
-                  <p>Select <strong>Copy invite</strong> to copy a ready-made email with that organisation's own link, then send it from your own inbox. To chase many at once, use <strong>Download for mail-merge (CSV)</strong>.</p>
+                  <p>Select <strong>Copy invite</strong> to copy a ready-made email with that organisation's own link, then send it from your own inbox. To chase many at once, download the list for mail-merge.</p>
                 </section>
 
                 <section className="howto-item">
-                  <h3>Remove a duplicate — without deleting it</h3>
+                  <h3>Remove a duplicate without deleting it</h3>
                   <p>If the same body appears twice, or one was added by mistake, select <strong>Archive</strong> and give a reason. Archived bodies disappear from every list but are kept, not deleted. To bring one back, open the <strong>Archived</strong> panel on the Overview and select <strong>Restore</strong>.</p>
                 </section>
 
                 <section className="howto-item">
                   <h3>Export the directory</h3>
-                  <p>Use <strong>Export CSV</strong> for a spreadsheet of every organisation and its status, or <strong>Export JSON</strong> for the full data. The Approved and New organisations lists have their own downloads too.</p>
+                  <p>Select <strong>Export CSV</strong> for a spreadsheet of every organisation and its status. Select <strong>Export JSON</strong> for the full data. The Approved and New organisations lists have their own downloads too.</p>
                 </section>
 
                 <section className="howto-item">
-                  <h3>If a change won't save</h3>
-                  <p>You'll see a message if a change doesn't save — usually because your sign-in has expired. <strong>Sign out, sign back in, and try again.</strong> Your change is not lost; it stays in the queue until it saves.</p>
+                  <h3>If a change does not save</h3>
+                  <p>You will see a message if a change does not save. This usually means your sign-in has expired. <strong>Sign out, sign back in, then try again.</strong> Your change is not lost. It stays in the queue until it saves.</p>
                 </section>
               </div>
             </div>}
