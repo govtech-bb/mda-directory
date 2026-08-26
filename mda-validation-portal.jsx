@@ -577,7 +577,7 @@ export default function App() {
       setSignError(decodeURIComponent(err.replace(/\+/g, " ")));
     } else if (confirmed) {
       setTab("dashboard");
-      setSignNotice("Email confirmed — you can sign in now.");
+      setSignNotice("Email confirmed. You can sign in now.");
     }
     try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
   }, []);
@@ -592,7 +592,7 @@ export default function App() {
     try { await saveRecords(next); setDashError(""); return true; }
     catch (e) {
       setRecords(prev);
-      setDashError("That change didn't save — your sign-in may have expired. Please sign out, sign back in, and try again.");
+      setDashError("That change did not save. Your sign-in may have expired. Sign out, sign back in, then try again.");
       return false;
     }
   };
@@ -881,7 +881,7 @@ export default function App() {
     // A validation whose organisation can no longer be found must not be silently
     // dropped — tell the coordinator instead of losing the approval.
     if (!r.isNew && r.targetMissing) {
-      setDashError(`Couldn't approve "${r.name}" — that organisation is no longer in the directory (it may have been removed or re-imported). The submission has been kept in the queue.`);
+      setDashError(`Could not approve "${r.name}". That organisation is no longer in the directory. It may have been removed or re-imported. The submission stays in the queue.`);
       return;
     }
     // Only remove the submission from the queue once the directory write has
@@ -891,11 +891,11 @@ export default function App() {
     try { await sbSetSubmissionStatus(r.submissionId, "approved"); } catch (e) { console.warn("Mark approved failed", e); }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
     setDashNotice(r.isNew
-      ? `Added “${r.name}”${r.parentName ? ` under ${r.parentName}` : ""} — it's now in the directory awaiting validation.`
-      : `Approved “${r.name}” — it's now the official record.`);
+      ? `Added “${r.name}”${r.parentName ? ` under ${r.parentName}` : ""}. It is now in the directory, awaiting validation.`
+      : `Approved “${r.name}”. It is now the official record.`);
   };
   const rejectSub = async (r) => {
-    try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); setDashError("That didn't save — your sign-in may have expired. Please sign out, sign back in, and try again."); return; }
+    try { await sbSetSubmissionStatus(r.submissionId, "returned"); } catch (e) { console.warn("Mark returned failed", e); setDashError("That did not save. Your sign-in may have expired. Sign out, sign back in, then try again."); return; }
     setPendingSubs((subs) => subs.filter((s) => s.id !== r.submissionId));
   };
   const approveAllSubs = async () => {
@@ -910,7 +910,7 @@ export default function App() {
     try { await Promise.all(doable.map((r) => sbSetSubmissionStatus(r.submissionId, "approved"))); } catch (e) { console.warn("Bulk mark failed", e); }
     const doneIds = new Set(doable.map((r) => r.submissionId));
     setPendingSubs((subs) => subs.filter((s) => !doneIds.has(s.id)));
-    setDashNotice(`Approved ${doable.length} submission${doable.length === 1 ? "" : "s"}.${skipped ? ` ${skipped} skipped — their organisation could not be found.` : ""}`);
+    setDashNotice(`Approved ${doable.length} submission${doable.length === 1 ? "" : "s"}.${skipped ? ` ${skipped} skipped because their organisation could not be found.` : ""}`);
   };
 
   const validAdminEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.toLowerCase().endsWith("@" + ADMIN_EMAIL_DOMAIN);
@@ -986,10 +986,10 @@ export default function App() {
   // Archive = soft delete. Hidden from every list but kept in the data with a
   // reason, and restorable. Use this for duplicates and bodies added in error.
   const archiveRecord = async (r) => {
-    const reason = window.prompt(`Archive “${r.name}”?\n\nGive a short reason (for example: duplicate of Barbados National Standards Institution). It will be hidden from the directory but not deleted — you can restore it later.`, "");
+    const reason = window.prompt(`Archive “${r.name}”?\n\nGive a short reason, for example: duplicate of Barbados National Standards Institution. It will be hidden from the directory but not deleted. You can restore it later.`, "");
     if (reason === null) return;
     const ok = await persist(records.map((x) => x.id === r.id ? { ...x, archived: true, archivedReason: reason.trim(), archivedBy: (reviewer || "").trim(), archivedAt: new Date().toISOString(), audit: [...(x.audit || []), auditEntry("archived", reviewer)] } : x));
-    if (ok) { if (rowOpen === r.id) setRowOpen(null); setDashNotice(`Archived “${r.name}”. It's hidden from the directory but not deleted — find it under Archived to restore it.`); }
+    if (ok) { if (rowOpen === r.id) setRowOpen(null); setDashNotice(`Archived “${r.name}”. It is hidden from the directory but not deleted. Find it under Archived to restore it.`); }
   };
   const restoreRecord = async (r) => {
     const ok = await persist(records.map((x) => x.id === r.id ? { ...x, archived: false, archivedReason: "", archivedBy: "", archivedAt: null, audit: [...(x.audit || []), auditEntry("restored", reviewer)] } : x));
@@ -1017,8 +1017,8 @@ export default function App() {
       "This is destructive and rarely what you want. It will:\n" +
       "• delete every organisation added since (including approved ones and new bodies),\n" +
       "• erase all validations and submitter details, and\n" +
-      "• regenerate every record's id — which breaks validation links you've already shared and orphans anything still in the review queue.\n\n" +
-      "Only do this to wipe test data on a fresh setup. Type of last resort — are you sure?"
+      "• regenerate every record's id, which breaks validation links you have already shared and orphans anything still in the review queue.\n\n" +
+      "Only do this to wipe test data on a fresh setup. This is a last resort. Are you sure?"
     )) return;
     if (!window.confirm("Final check: this permanently replaces all current data with the starter list. Continue?")) return;
     const ok = await persist(buildSeed());
@@ -1168,8 +1168,8 @@ export default function App() {
                         {isOpen && (
                           <ul className="rowlist">
                             {g.showMinistryRow && (
-                              <li className="vrow ministry" role="button" tabIndex={0} aria-label={`Validate ${g.ministry.name} — head office`} onKeyDown={onRowKey(() => openValidation(g.ministry))} onClick={() => openValidation(g.ministry)}>
-                                <div className="vrow-body"><span className="vrow-name">{g.ministry.name}</span><span className="kindtag">Ministry — head office</span></div>
+                              <li className="vrow ministry" role="button" tabIndex={0} aria-label={`Validate ${g.ministry.name}, head office`} onKeyDown={onRowKey(() => openValidation(g.ministry))} onClick={() => openValidation(g.ministry)}>
+                                <div className="vrow-body"><span className="vrow-name">{g.ministry.name}</span><span className="kindtag">Ministry, head office</span></div>
                                 <StatusBadge status={g.ministry.status} /><ChevronRight size={16} className="vrow-go" />
                               </li>
                             )}
@@ -1186,12 +1186,12 @@ export default function App() {
                               return (
                                 <React.Fragment key={d.id}>
                                   <li className="vrow dept subgroup" role="button" tabIndex={0} aria-expanded={dOpen} aria-label={`${dOpen ? "Collapse" : "Expand"} ${d.name}, ${facs.length} facilities`} onKeyDown={onRowKey(() => setOpenGroups((o) => ({ ...o, [d.id]: !o[d.id] })))} onClick={() => setOpenGroups((o) => ({ ...o, [d.id]: !o[d.id] }))}>
-                                    <div className="vrow-body"><span className="vrow-name">{d.name}</span><span className="kindtag">{facs.length} {facs.length === 1 ? "facility" : "facilities"} — tap to open</span></div>
+                                    <div className="vrow-body"><span className="vrow-name">{d.name}</span><span className="kindtag">{facs.length} {facs.length === 1 ? "facility" : "facilities"}, tap to open</span></div>
                                     <StatusBadge status={d.status} />
                                   </li>
                                   {dOpen && (
                                     <li className="vrow facility" role="button" tabIndex={0} aria-label={`Validate ${d.name} main office`} onKeyDown={onRowKey(() => openValidation(d))} onClick={() => openValidation(d)}>
-                                      <div className="vrow-body"><span className="vrow-name">{d.name} — main office</span></div>
+                                      <div className="vrow-body"><span className="vrow-name">{d.name}, main office</span></div>
                                       <StatusBadge status={d.status} /><ChevronRight size={16} className="vrow-go" />
                                     </li>
                                   )}
@@ -1228,7 +1228,7 @@ export default function App() {
               <div className="form-head">
                 <div><h2 ref={formHeadingRef} tabIndex={-1}>{selected.name}</h2>
                   <div className="form-sub">
-                    {selected.kind === "ministry" ? <span className="kindtag">Ministry — head office</span> : selected.kind === "facility" ? <span className="kindtag">Facility under {parentOf(selected)?.name}</span> : <span className="kindtag">Department under {parentOf(selected)?.name}</span>}
+                    {selected.kind === "ministry" ? <span className="kindtag">Ministry, head office</span> : selected.kind === "facility" ? <span className="kindtag">Facility under {parentOf(selected)?.name}</span> : <span className="kindtag">Department under {parentOf(selected)?.name}</span>}
                     <StatusBadge status={selected.status} />
                   </div>
                 </div>
@@ -1243,7 +1243,7 @@ export default function App() {
                   </ul>
                 </div>
               )}
-              <p className="form-lead">Please check each detail below. GovTech Barbados publishes these so the public can reach your office through gov.bb — confirm anything that is correct, and edit anything that is wrong.</p>
+              <p className="form-lead">Check each detail below. GovTech Barbados publishes these so the public can reach your office through gov.bb. Confirm anything that is correct, and edit anything that is wrong.</p>
               <div className="fields">
                 <Field id="field-phone" label="Main telephone number" type="tel" inputmode="tel" error={errOf("field-phone")} onfile={selected.currentPhone} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} placeholder="e.g. (246) 555-0100" confirmed={form.confirm.phone} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, phone: c } }))} />
                 <Field id="field-email" label="Email address" type="email" inputmode="email" error={errOf("field-email")} onfile={selected.currentEmail} value={form.email} onChange={(v) => setForm({ ...form, email: v })} placeholder="e.g. info@agency.gov.bb" confirmed={form.confirm.email} onConfirm={(c) => setForm((f) => ({ ...f, confirm: { ...f.confirm, email: c } }))} />
@@ -1255,7 +1255,7 @@ export default function App() {
                 <p className="roles-hint">Confirm these direct lines, correct any that have changed, and add or remove rows as needed.</p>
                 {errOf("field-roles") && <p className="field-err"><span className="sr-only">Error: </span>{errOf("field-roles")}</p>}
                 <div className="roles-edit">
-                  {form.roles.length === 0 && <p className="roles-empty">None on record yet — add any direct lines you'd like listed.</p>}
+                  {form.roles.length === 0 && <p className="roles-empty">None on record yet. Add any direct lines you would like listed.</p>}
                   {form.roles.map((row, i) => (
                     <div className="role-row" key={i}>
                       <input className="role-r" aria-label={`Role or office, row ${i + 1}`} value={row.r} placeholder="Role / office" onChange={(e) => setRole(i, "r", e.target.value)} />
@@ -1269,7 +1269,7 @@ export default function App() {
                   const cleanNow = form.roles.map((x) => ({ r: (x.r || "").trim(), t: (x.t || "").trim() })).filter((x) => x.r || x.t);
                   const changedNow = JSON.stringify(cleanNow) !== JSON.stringify(selected.roles || []);
                   return changedNow
-                    ? <div className="field-changed"><PencilLine size={13} /> You've edited the roles — they'll be submitted as a correction.</div>
+                    ? <div className="field-changed"><PencilLine size={13} /> You have edited the roles. They will be submitted as a correction.</div>
                     : <label className={`confirm-field${form.confirm.roles ? " on" : ""}`}><input type="checkbox" checked={!!form.confirm.roles} onChange={(e) => setForm((f) => ({ ...f, confirm: { ...f.confirm, roles: e.target.checked } }))} /><span>I've checked the roles and numbers above and confirm they are correct</span></label>;
                 })()}
               </div>
@@ -1452,7 +1452,7 @@ export default function App() {
               return (
                 <div className="links-panel">
                   <div className="links-intro">
-                    <p><strong>Send each MDA its own validation link.</strong> Copy a ready-made invitation for any organisation, or download the list to mail-merge. No email is sent from here — you send it from your own mail tool.</p>
+                    <p><strong>Send each MDA its own validation link.</strong> Copy a ready-made invitation for any organisation, or download the list to mail-merge. No email is sent from here. You send it from your own mail tool.</p>
                     <p className="links-base"><Info size={13} /> {awaitingCount} of {orderedRecords.length} organisations still need to respond. Links use this portal's address: <code>{baseUrl() || "(unavailable)"}</code>.</p>
                   </div>
                   <div className="links-tools">
@@ -1605,7 +1605,7 @@ export default function App() {
                 <option value="">As a ministry (top level)</option>
                 {ministries.flatMap((m) => [
                   <option key={m.id} value={m.id}>Under: {m.name}</option>,
-                  ...deptsOf(m.id).map((d) => <option key={d.id} value={d.id}>— under {m.name} › {d.name}</option>),
+                  ...deptsOf(m.id).map((d) => <option key={d.id} value={d.id}>· under {m.name} › {d.name}</option>),
                 ])}
               </select>
               <button className="btn primary sm" onClick={addRecord}><Plus size={15} /> Add</button>
@@ -1691,7 +1691,7 @@ export default function App() {
                         <li key={r.submissionId} className="review-card">
                           <div className="review-card-head">
                             <div><div className="review-name">{r.proposedName}</div><div className="review-sub">Proposed new {r.proposedKind === "facility" ? "facility or office" : "department or agency"} under {r.parentName} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}` : ""}</div></div>
-                            <span className="badge badge-updated">New — to add</span>
+                            <span className="badge badge-updated">New body</span>
                           </div>
                           {r.repEmail && <div className="review-contact">Reply-to: {r.repEmail}</div>}
                           {r.notes && <div className="meta-notes">“{r.notes}”</div>}
@@ -1709,7 +1709,7 @@ export default function App() {
                     return (
                       <li key={r.submissionId} className="review-card">
                         <div className="review-card-head">
-                          <div><div className="review-name">{r.name}</div><div className="review-sub">{r.kind === "ministry" ? "Ministry — head office" : r.kind === "facility" ? `Facility under ${parent || ""}` : `Department under ${parent || ""}`} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : ""}</div></div>
+                          <div><div className="review-name">{r.name}</div><div className="review-sub">{r.kind === "ministry" ? "Ministry, head office" : r.kind === "facility" ? `Facility under ${parent || ""}` : `Department under ${parent || ""}`} · submitted {fmtDate(r.submittedAt)}{r.repName ? ` by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : ""}</div></div>
                           <span className={`badge badge-${r.submissionType === "updated" ? "updated" : "confirmed"}`}>{r.submissionType === "updated" ? <><FileEdit size={13} /> Changes proposed</> : <><Check size={13} /> Confirmed unchanged</>}</span>
                         </div>
                         <div className="compare">
@@ -1829,7 +1829,7 @@ function Field({ id, label, onfile, value, onChange, placeholder, textarea, type
         ? <textarea id={id} rows={2} value={value} placeholder={placeholder} aria-invalid={error ? true : undefined} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value)} />
         : <input id={id} type={type || "text"} inputMode={inputmode} autoComplete={autoComplete} value={value} placeholder={placeholder} aria-invalid={error ? true : undefined} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value)} />}
       {hasOnFile && (changed
-        ? <div className="field-changed">You've edited this — it will be submitted as a correction.</div>
+        ? <div className="field-changed">You have edited this. It will be submitted as a correction.</div>
         : <label className={`confirm-field${confirmed ? " on" : ""}`}><input type="checkbox" checked={!!confirmed} onChange={(e) => onConfirm(e.target.checked)} /><span>I've checked this and confirm it is correct</span></label>)}
     </div>
   );
