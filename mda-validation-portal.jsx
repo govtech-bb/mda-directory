@@ -1414,6 +1414,7 @@ export default function App() {
             <nav className="subtabs">
               <button className={dashView === "overview" ? "subtab on" : "subtab"} onClick={() => setDashView("overview")}>Overview</button>
               <button className={dashView === "review" ? "subtab on" : "subtab"} onClick={() => setDashView("review")}>Pending review{pendingList.length ? <span className="pill">{pendingList.length}</span> : null}</button>
+              <button className={dashView === "howto" ? "subtab on" : "subtab"} onClick={() => setDashView("howto")}>How to</button>
             </nav>
 
             {dashView === "overview" && <div className="dash-view fade">
@@ -1732,6 +1733,65 @@ export default function App() {
                   })}
                 </ul>
               )}
+            </div>}
+
+            {dashView === "howto" && <div className="dash-view fade">
+              <div className="howto">
+                <p className="howto-intro">A short guide to reviewing submissions and keeping the directory accurate. If you get stuck, contact the digital team.</p>
+
+                <section className="howto-item">
+                  <h3>What you do here</h3>
+                  <p>Representatives from each ministry, department and agency confirm or correct their own contact details. Your job is to review what they submit and publish the approved record. Nothing a representative submits goes live until you approve it.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Sign in</h3>
+                  <p>Sign in with your <strong>@{ADMIN_EMAIL_DOMAIN}</strong> email and password. Only {ADMIN_EMAIL_DOMAIN} accounts can review submissions or change the record.</p>
+                  <p>Forgotten your password? On the sign-in screen, select <strong>Forgotten your password?</strong>, enter your email, and follow the link we send you.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Review a submission</h3>
+                  <ol>
+                    <li>Open the <strong>Pending review</strong> tab. A number shows how many are waiting.</li>
+                    <li>Read each card. It shows the current official details next to what was submitted, and highlights what changed.</li>
+                    <li>Select <strong>Approve</strong> to make the submitted details the official record, or <strong>Send back</strong> if something looks wrong.</li>
+                    <li>Need to fix a small detail yourself first? Select <strong>Edit corrections</strong>.</li>
+                  </ol>
+                  <p>You can clear the whole queue at once with <strong>Approve all</strong> — use it only when you've read each one.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Add a body someone has proposed</h3>
+                  <p>If a representative says a department or facility is missing, it arrives in <strong>Pending review</strong> as a request to add. Select <strong>Approve &amp; add</strong> to put it in the directory. It starts blank and awaiting validation, ready for its details to be confirmed. You'll find every added body under the <strong>New organisations</strong> card on the Overview.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Edit details, and record who gave them</h3>
+                  <p>On the <strong>Overview</strong> tab, open a ministry, then open any organisation. Select <strong>Edit on-file details</strong> to change the name, phone, email or address. Under <strong>Who supplied these details</strong>, add the contact's name and email so the record shows who to thank and who to ask.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>See who has responded, and chase the rest</h3>
+                  <p>On the Overview, select <strong>Validation links</strong>. Each organisation shows <strong>Responded</strong> or <strong>Awaiting</strong>. Turn on <strong>Show only awaiting</strong> to see who still needs to reply.</p>
+                  <p>Select <strong>Copy invite</strong> to copy a ready-made email with that organisation's own link, then send it from your own inbox. To chase many at once, use <strong>Download for mail-merge (CSV)</strong>.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Remove a duplicate — without deleting it</h3>
+                  <p>If the same body appears twice, or one was added by mistake, select <strong>Archive</strong> and give a reason. Archived bodies disappear from every list but are kept, not deleted. To bring one back, open the <strong>Archived</strong> panel on the Overview and select <strong>Restore</strong>.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>Export the directory</h3>
+                  <p>Use <strong>Export CSV</strong> for a spreadsheet of every organisation and its status, or <strong>Export JSON</strong> for the full data. The Approved and New organisations lists have their own downloads too.</p>
+                </section>
+
+                <section className="howto-item">
+                  <h3>If a change won't save</h3>
+                  <p>You'll see a message if a change doesn't save — usually because your sign-in has expired. <strong>Sign out, sign back in, and try again.</strong> Your change is not lost; it stays in the queue until it saves.</p>
+                </section>
+              </div>
             </div>}
 
           </section>
@@ -2056,6 +2116,15 @@ textarea { resize:vertical; }
 .pill { background:var(--updated-bg); color:var(--updated); font-size:11px; font-weight:700; border-radius:var(--govbb-radius); padding:1px 7px; }
 .subtab.on .pill { background:var(--govbb-teal-00); color:#fff; }
 .dash-view { padding-top:18px; }
+.howto { max-width:760px; }
+.howto-intro { font-size:16px; color:var(--muted); margin:0 0 6px; }
+.howto-item { padding:20px 0; border-top:1px solid var(--line); }
+.howto-item h3 { font-size:20px; margin:0 0 8px; color:var(--navy); letter-spacing:-.01em; }
+.howto-item p { font-size:16px; line-height:1.6; margin:0 0 10px; max-width:70ch; }
+.howto-item p:last-child { margin-bottom:0; }
+.howto-item ol { margin:0 0 10px; padding-left:22px; }
+.howto-item ol li { font-size:16px; line-height:1.6; margin:6px 0; max-width:68ch; }
+.howto-item strong { color:var(--ink); font-weight:600; }
 .overview-tools { display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
