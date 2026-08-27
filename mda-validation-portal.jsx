@@ -11,6 +11,8 @@ const Search = NoIcon, Building2 = NoIcon, Phone = NoIcon, Mail = NoIcon, MapPin
 
 const KEY = "mda-validation:records-v7";
 const SHARED = true;
+// Milestones marked on the activity chart. Add { date: "YYYY-MM-DD", label } here.
+const CHART_EVENTS = [{ date: "2026-08-19", label: "CEO notice" }];
 
 // ---------------------------------------------------------------------------
 // Shared database + admin auth (Supabase)
@@ -102,6 +104,15 @@ async function sbLoadSubmissions() {
   const res = await sbAuthedFetch(url);
   if (!res.ok) throw new Error(`Supabase submissions ${res.status}`);
   return res.json();
+}
+// Every submission (any status) in the recent window, for the activity chart.
+// Returns [{ created_at, type }] where type is "new" (add request) or "validation".
+async function sbLoadActivity(sinceISO) {
+  const url = `${SUPABASE_URL}/rest/v1/submissions?created_at=gte.${encodeURIComponent(sinceISO)}&select=created_at,payload&order=created_at.asc`;
+  const res = await sbAuthedFetch(url);
+  if (!res.ok) throw new Error(`Supabase activity ${res.status}`);
+  const rows = await res.json();
+  return rows.map((r) => ({ created_at: r.created_at, type: (r.payload && r.payload.type === "new") ? "new" : "validation" }));
 }
 async function sbSetSubmissionStatus(id, status) {
   const res = await sbAuthedFetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
@@ -521,6 +532,8 @@ export default function App() {
   const [signMode, setSignMode] = useState("signin"); // "signin" | "reset"
   const [recovery, setRecovery] = useState(null); // { token, email } after a reset link
   const [pendingSubs, setPendingSubs] = useState([]);
+  const [activity, setActivity] = useState([]);   // recent submissions for the chart
+  const [chartMode, setChartMode] = useState("day"); // "day" (14 days) | "week" (8 weeks)
 
   useEffect(() => {
     setPendingSlug(getLinkSlug());
@@ -543,8 +556,12 @@ export default function App() {
 
   // Load the pending review queue whenever a coordinator is signed in.
   useEffect(() => {
-    if (!authed || !supabaseReady()) { setPendingSubs([]); return; }
+    if (!authed || !supabaseReady()) { setPendingSubs([]); setActivity([]); return; }
     (async () => { try { setPendingSubs(await sbLoadSubmissions()); } catch (e) { console.warn("Could not load review queue", e); } })();
+    (async () => {
+      try { const since = new Date(Date.now() - 100 * 864e5).toISOString(); setActivity(await sbLoadActivity(since)); }
+      catch (e) { console.warn("Could not load activity", e); }
+    })();
   }, [authed]);
 
   // Handle auth redirects: Google OAuth AND the email-confirmation link both
@@ -616,6 +633,34 @@ export default function App() {
     const done = approved;
     return { total, approved, pending, awaiting, done, pct: total ? Math.round((done / total) * 100) : 0 };
   }, [records, pendingSubs]);
+  // Requests-per-day (or per-week) counts for the activity chart.
+  const chartData = useMemo(() => {
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const weekStart = (d) => { const x = dayStart(d); const wd = (x.getDay() + 6) % 7; x.setDate(x.getDate() - wd); return x; }; // Monday
+    const week = chartMode === "week";
+    const n = week ? 8 : 14;
+    const base = week ? weekStart(new Date()) : dayStart(new Date());
+    const buckets = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(base);
+      if (week) d.setDate(base.getDate() - i * 7); else d.setDate(base.getDate() - i);
+      buckets.push({ t: d.getTime(), label: `${d.getDate()} ${MON[d.getMonth()]}`, v: 0, nw: 0 });
+    }
+    const idxFor = (date) => {
+      const t = (week ? weekStart(date) : dayStart(date)).getTime();
+      for (let i = 0; i < buckets.length; i++) if (buckets[i].t === t) return i;
+      return -1;
+    };
+    for (const a of activity) {
+      const i = idxFor(new Date(a.created_at));
+      if (i < 0) continue;
+      if (a.type === "new") buckets[i].nw++; else buckets[i].v++;
+    }
+    const events = CHART_EVENTS.map((e) => ({ i: idxFor(new Date(e.date + "T12:00:00")), label: e.label })).filter((e) => e.i >= 0);
+    const total = buckets.reduce((s, b) => s + b.v + b.nw, 0);
+    return { buckets, events, total, week };
+  }, [activity, chartMode]);
   // Build review-card records from the pending submissions queue, overlaying the
   // submitted values onto each organisation's current official details.
   const pendingList = useMemo(() => {
@@ -1599,6 +1644,28 @@ export default function App() {
                 )}
               </div>
             )}
+
+            <div className="chart-card">
+              <div className="chart-head">
+                <div>
+                  <h3>Requests per {chartData.week ? "week" : "day"}</h3>
+                  <p className="chart-sub">Validations and new-organisation requests coming in</p>
+                </div>
+                <div className="chart-tools">
+                  <div className="chart-total"><span className="ct-n">{chartData.total}</span><span className="ct-l">in the last {chartData.week ? "8 weeks" : "14 days"}</span></div>
+                  <div className="seg" role="group" aria-label="Group by">
+                    <button className={chartMode === "day" ? "on" : ""} onClick={() => setChartMode("day")}>Daily</button>
+                    <button className={chartMode === "week" ? "on" : ""} onClick={() => setChartMode("week")}>Weekly</button>
+                  </div>
+                </div>
+              </div>
+              <div className="chart-legend">
+                <span><span className="lg-line lg-v" /> Validation requests</span>
+                <span><span className="lg-line lg-nw" /> New organisation requests</span>
+              </div>
+              {chartData.total === 0 ? <div className="empty">No requests in this period yet.</div> : <RequestsChart data={chartData} />}
+            </div>
+
             <div className="add-row">
               <input placeholder="Add a ministry, body or facility name…" value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addRecord()} />
               <select value={newParent} onChange={(e) => setNewParent(e.target.value)}>
@@ -1864,6 +1931,45 @@ function Field({ id, label, onfile, value, onChange, placeholder, textarea, type
     </div>
   );
 }
+function RequestsChart({ data }) {
+  const { buckets, events, week } = data;
+  const W = 680, H = 260, x0 = 36, x1 = 668, y0 = 22, y1 = 232;
+  const n = buckets.length;
+  const step = n > 1 ? (x1 - x0) / (n - 1) : 0;
+  const maxVal = Math.max(4, ...buckets.map((b) => Math.max(b.v, b.nw)));
+  const top = Math.ceil(maxVal / 4) * 4;
+  const yx = (val) => y1 - (val / top) * (y1 - y0);
+  const px = (i) => x0 + i * step;
+  const poly = (key) => buckets.map((b, i) => `${px(i).toFixed(1)},${yx(b[key]).toFixed(1)}`).join(" ");
+  const showLabel = (i) => week || i % 2 === 0 || i === n - 1;
+  const gv = [0, top / 4, top / 2, (3 * top) / 4, top];
+  return (
+    <svg className="req-chart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={`Requests per ${week ? "week" : "day"}: validation requests and new organisation requests over time.`}>
+      {gv.map((g, k) => (
+        <g key={"g" + k}>
+          <line x1={x0} y1={yx(g)} x2={x1} y2={yx(g)} className="req-grid" />
+          <text x={x0 - 7} y={yx(g) + 4} className="req-ytick" textAnchor="end">{Math.round(g)}</text>
+        </g>
+      ))}
+      {buckets.map((b, i) => showLabel(i) ? <text key={"x" + i} x={px(i)} y={y1 + 16} className="req-xtick" textAnchor="middle">{b.label}</text> : null)}
+      {events.map((e, k) => (
+        <g key={"e" + k}>
+          <line x1={px(e.i)} y1={y0} x2={px(e.i)} y2={y1} className="req-event" />
+          <text x={px(e.i)} y={y0 - 7} className="req-event-lbl" textAnchor="middle">{e.label}</text>
+        </g>
+      ))}
+      <polyline className="req-line req-line-v" points={poly("v")} />
+      <polyline className="req-line req-line-nw" points={poly("nw")} />
+      {buckets.map((b, i) => (
+        <g key={"m" + i}>
+          <circle cx={px(i)} cy={yx(b.v)} r="3" className="req-dot-v" />
+          <circle cx={px(i)} cy={yx(b.nw)} r="3" className="req-dot-nw" />
+          <rect x={px(i) - (step || 12) / 2} y={y0} width={step || 12} height={y1 - y0} fill="transparent"><title>{`${b.label}: ${b.v} validation${b.v === 1 ? "" : "s"}, ${b.nw} new`}</title></rect>
+        </g>
+      ))}
+    </svg>
+  );
+}
 function Stat({ n, label, cls, onClick, active }) {
   const inner = <><div className="stat-n">{n}</div><div className="stat-l">{label}</div></>;
   if (onClick) return <button type="button" className={`stat stat-${cls} stat-btn${active ? " stat-active" : ""}`} onClick={onClick} aria-pressed={active}>{inner}<span className="stat-caret">{active ? "Hide" : "View"}</span></button>;
@@ -2066,6 +2172,33 @@ textarea { resize:vertical; }
 .stat-new.stat-active { border-color:var(--govbb-teal-00); box-shadow:0 0 0 1px var(--govbb-teal-00); }
 .stat-new .stat-caret { color:var(--govbb-teal-00); }
 .panel-intro { color:var(--muted); font-size:13.5px; margin:0 0 14px; }
+.chart-card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:18px 20px; margin-bottom:22px; }
+.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+.chart-head h3 { font-size:17px; margin:0; }
+.chart-sub { font-size:13px; color:var(--muted); margin:3px 0 0; }
+.chart-tools { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.chart-total { text-align:right; line-height:1.1; }
+.chart-total .ct-n { font-family:'Figtree',system-ui,sans-serif; font-size:26px; font-weight:700; color:var(--navy); }
+.chart-total .ct-l { display:block; font-size:11.5px; color:var(--muted); margin-top:2px; }
+.seg { display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
+.seg button { background:var(--surface); border:0; border-left:1px solid var(--line); font-family:inherit; font-size:13px; font-weight:600; color:var(--muted); padding:7px 13px; cursor:pointer; }
+.seg button:first-child { border-left:0; }
+.seg button.on { background:var(--govbb-teal-00); color:#fff; }
+.chart-legend { display:flex; flex-wrap:wrap; gap:18px; margin:14px 0 6px; font-size:13px; color:var(--muted); }
+.chart-legend span { display:flex; align-items:center; gap:7px; }
+.lg-line { display:inline-block; width:20px; height:0; }
+.lg-v { border-top:3px solid #2a78d6; }
+.lg-nw { border-top:3px dashed #eb6834; }
+.req-chart { width:100%; height:auto; display:block; margin-top:6px; }
+.req-grid { stroke:var(--line); stroke-width:1; }
+.req-ytick, .req-xtick { fill:var(--muted); font-family:'Figtree',system-ui,sans-serif; font-size:11px; }
+.req-line { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.req-line-v { stroke:#2a78d6; }
+.req-line-nw { stroke:#eb6834; stroke-dasharray:6 4; }
+.req-dot-v { fill:#2a78d6; stroke:var(--surface); stroke-width:2; }
+.req-dot-nw { fill:#eb6834; stroke:var(--surface); stroke-width:2; }
+.req-event { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 3; }
+.req-event-lbl { fill:var(--muted); font-family:'Figtree',system-ui,sans-serif; font-size:10.5px; font-weight:600; }
 .stat-btn { cursor:pointer; font-family:inherit; position:relative; transition:border-color .12s, box-shadow .12s; }
 .stat-btn:hover { border-color:var(--confirmed); }
 .stat-active { border-color:var(--confirmed); box-shadow:0 0 0 1px var(--confirmed); }
