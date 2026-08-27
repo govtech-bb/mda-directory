@@ -12,7 +12,7 @@ const Search = NoIcon, Building2 = NoIcon, Phone = NoIcon, Mail = NoIcon, MapPin
 const KEY = "mda-validation:records-v7";
 const SHARED = true;
 // Milestones marked on the activity chart. Add { date: "YYYY-MM-DD", label } here.
-const CHART_EVENTS = [{ date: "2026-08-19", label: "CEO notice" }];
+const CHART_EVENTS = [];
 
 // ---------------------------------------------------------------------------
 // Shared database + admin auth (Supabase)
