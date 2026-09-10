@@ -108,11 +108,15 @@ async function sbLoadSubmissions() {
 // Every submission (any status) in the recent window, for the activity chart.
 // Returns [{ created_at, type }] where type is "new" (add request) or "validation".
 async function sbLoadActivity(sinceISO) {
-  const url = `${SUPABASE_URL}/rest/v1/submissions?created_at=gte.${encodeURIComponent(sinceISO)}&select=created_at,payload&order=created_at.asc`;
+  const url = `${SUPABASE_URL}/rest/v1/submissions?created_at=gte.${encodeURIComponent(sinceISO)}&select=created_at,org_id,payload&order=created_at.asc`;
   const res = await sbAuthedFetch(url);
   if (!res.ok) throw new Error(`Supabase activity ${res.status}`);
   const rows = await res.json();
-  return rows.map((r) => ({ created_at: r.created_at, type: (r.payload && r.payload.type === "new") ? "new" : "validation" }));
+  return rows.map((r) => {
+    const p = r.payload || {};
+    const isNew = p.type === "new";
+    return { created_at: r.created_at, type: isNew ? "new" : "validation", orgId: r.org_id || null, parentId: isNew ? (p.parentId || null) : null };
+  });
 }
 async function sbSetSubmissionStatus(id, status) {
   const res = await sbAuthedFetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
@@ -534,6 +538,7 @@ export default function App() {
   const [pendingSubs, setPendingSubs] = useState([]);
   const [activity, setActivity] = useState([]);   // recent submissions for the chart
   const [chartMode, setChartMode] = useState("day"); // "day" (14 days) | "week" (8 weeks)
+  const [levelScope, setLevelScope] = useState("all"); // "all" | "core" (levels 1 and 2)
 
   useEffect(() => {
     setPendingSlug(getLinkSlug());
@@ -616,6 +621,10 @@ export default function App() {
   // Archived records are hidden from every list but kept in the data (soft delete).
   const ministries = useMemo(() => records.filter((r) => r.kind === "ministry" && !r.archived).sort((a, b) => a.name.localeCompare(b.name)), [records]);
   const deptsOf = (mid) => records.filter((r) => r.parentId === mid && !r.archived).sort((a, b) => a.name.localeCompare(b.name));
+  const recById = useMemo(() => Object.fromEntries(records.map((r) => [r.id, r])), [records]);
+  // Data level: 1 = ministry, 2 = body or agency, 3 = facility. Core = levels 1 and 2.
+  const levelOf = (r) => { let n = 1, p = r && r.parentId, g = 0; while (p && recById[p] && g++ < 6) { n++; p = recById[p].parentId; } return n; };
+  const isCore = (r) => levelOf(r) <= 2;
   const selected = useMemo(() => records.find((r) => r.id === selectedId) || null, [records, selectedId]);
   const parentOf = (rec) => (rec && rec.parentId ? records.find((r) => r.id === rec.parentId) : null);
   const rolesShown = (r) => (r.validatedRoles && r.validatedRoles.length ? r.validatedRoles : (r.roles || []));
@@ -625,14 +634,14 @@ export default function App() {
     return { total: rows.length, done: rows.filter((r) => r.status !== "awaiting").length };
   };
   const stats = useMemo(() => {
-    const live = records.filter((r) => !r.archived);
+    const live = records.filter((r) => !r.archived && (levelScope !== "core" || isCore(r)));
     const total = live.length;
     const approved = live.filter((r) => r.status === "approved").length;
     const pending = pendingSubs.length;
     const awaiting = total - approved;
     const done = approved;
     return { total, approved, pending, awaiting, done, pct: total ? Math.round((done / total) * 100) : 0 };
-  }, [records, pendingSubs]);
+  }, [records, pendingSubs, levelScope]);
   // Requests-per-day (or per-week) counts for the activity chart.
   const chartData = useMemo(() => {
     const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -652,7 +661,14 @@ export default function App() {
       for (let i = 0; i < buckets.length; i++) if (buckets[i].t === t) return i;
       return -1;
     };
+    const inScope = (a) => {
+      if (levelScope !== "core") return true;
+      const rec = a.type === "new" ? recById[a.parentId] : recById[a.orgId];
+      if (!rec) return a.type !== "new"; // unknown org: keep validations, drop new-under-unknown
+      return (levelOf(rec) + (a.type === "new" ? 1 : 0)) <= 2;
+    };
     for (const a of activity) {
+      if (!inScope(a)) continue;
       const i = idxFor(new Date(a.created_at));
       if (i < 0) continue;
       if (a.type === "new") buckets[i].nw++; else buckets[i].v++;
@@ -660,7 +676,7 @@ export default function App() {
     const events = CHART_EVENTS.map((e) => ({ i: idxFor(new Date(e.date + "T12:00:00")), label: e.label })).filter((e) => e.i >= 0);
     const total = buckets.reduce((s, b) => s + b.v + b.nw, 0);
     return { buckets, events, total, week };
-  }, [activity, chartMode]);
+  }, [activity, chartMode, levelScope, records]);
   // Build review-card records from the pending submissions queue, overlaying the
   // submitted values onto each organisation's current official details.
   const pendingList = useMemo(() => {
@@ -694,9 +710,8 @@ export default function App() {
       };
     });
   }, [pendingSubs, records]);
-  const approvedList = useMemo(() => records.filter((r) => r.status === "approved" && !r.archived), [records]);
+  const approvedList = useMemo(() => records.filter((r) => r.status === "approved" && !r.archived && (levelScope !== "core" || isCore(r))), [records, levelScope]);
   const archivedList = useMemo(() => records.filter((r) => r.archived), [records]);
-  const recById = useMemo(() => Object.fromEntries(records.map((r) => [r.id, r])), [records]);
   // Name segments from the top-level ministry down to this record.
   const recParts = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts; };
   // Full "Ministry › body › facility" label for a record.
@@ -715,7 +730,7 @@ export default function App() {
   };
   const approvedGroups = useMemo(() => groupByMinistry(approvedList), [approvedList, records]);
   // Organisations added to the directory from an approved "new" proposal.
-  const proposedList = useMemo(() => records.filter((r) => r.origin === "proposal" && !r.archived), [records]);
+  const proposedList = useMemo(() => records.filter((r) => r.origin === "proposal" && !r.archived && (levelScope !== "core" || isCore(r))), [records, levelScope]);
   const proposedGroups = useMemo(() => groupByMinistry(proposedList), [proposedList, records]);
 
   // Stable, collision-safe slug per record (ministries first, then their depts, in display order)
@@ -1528,6 +1543,14 @@ export default function App() {
               );
             })()}
 
+            <div className="level-toggle">
+              <span className="lt-label">Show</span>
+              <div className="seg" role="group" aria-label="Data level">
+                <button className={levelScope === "all" ? "on" : ""} onClick={() => setLevelScope("all")}>All</button>
+                <button className={levelScope === "core" ? "on" : ""} onClick={() => setLevelScope("core")}>Ministries and bodies</button>
+              </div>
+              {levelScope === "core" && <span className="lt-note">Levels 1 and 2 only. Facilities are not counted.</span>}
+            </div>
             <div className="progress-wrap"><div className="progress-row"><span>{stats.done} of {stats.total} responded</span><span>{stats.pct}%</span></div><div className="progress"><div className="progress-fill" style={{ width: `${stats.pct}%` }} /></div></div>
             <div className="stat-grid"><Stat n={stats.awaiting} label="Awaiting" cls="pending" /><Stat n={stats.pending} label="Pending review" cls="updated" /><Stat n={stats.approved} label="Approved" cls="confirmed" onClick={() => setShowApproved((v) => !v)} active={showApproved} /><Stat n={proposedList.length} label="New organisations" cls="new" onClick={() => setShowProposed((v) => !v)} active={showProposed} /><Stat n={stats.total} label="Total bodies" cls="total" /></div>
             {showProposed && (
@@ -2291,6 +2314,9 @@ textarea { resize:vertical; }
 .howto-defs li { font-size:16px; line-height:1.6; margin:8px 0; max-width:70ch; }
 .howto-item strong { color:var(--ink); font-weight:600; }
 .overview-tools { display:flex; justify-content:flex-end; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.level-toggle { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 14px; }
+.level-toggle .lt-label { font-size:13px; color:var(--muted); }
+.level-toggle .lt-note { font-size:12px; color:var(--muted); }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
 .review-tools { display:flex; align-items:flex-end; gap:9px; }
