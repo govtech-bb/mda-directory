@@ -630,7 +630,7 @@ export default function App() {
   const rolesShown = (r) => (r.validatedRoles && r.validatedRoles.length ? r.validatedRoles : (r.roles || []));
   const descendantsOf = (id) => deptsOf(id).flatMap((c) => [c, ...descendantsOf(c.id)]);
   const groupStat = (mid) => {
-    const rows = [records.find((r) => r.id === mid), ...descendantsOf(mid)].filter(Boolean);
+    const rows = [records.find((r) => r.id === mid), ...descendantsOf(mid)].filter(Boolean).filter((r) => levelScope !== "core" || isCore(r));
     return { total: rows.length, done: rows.filter((r) => r.status !== "awaiting").length };
   };
   const stats = useMemo(() => {
@@ -1704,7 +1704,7 @@ export default function App() {
               {ministries.map((m) => {
                 const gs = groupStat(m.id); const open = !!dashOpen[m.id];
                 const rows = [{ rec: m, level: 0 }];
-                for (const d of deptsOf(m.id)) { rows.push({ rec: d, level: 1 }); for (const f of deptsOf(d.id)) rows.push({ rec: f, level: 2 }); }
+                for (const d of deptsOf(m.id)) { rows.push({ rec: d, level: 1 }); if (levelScope !== "core") for (const f of deptsOf(d.id)) rows.push({ rec: f, level: 2 }); }
                 return (
                   <div key={m.id} className="dgroup">
                     <button className="dgroup-head" onClick={() => setDashOpen((o) => ({ ...o, [m.id]: !o[m.id] }))}>
