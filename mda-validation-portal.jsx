@@ -1093,13 +1093,13 @@ export default function App() {
       const ch = (e.changes || []).map((c) => c.action === "corrected" ? `${c.field} corrected (${c.from || "—"} → ${c.to || "—"})` : `${c.field} ${c.action}`).join("; ");
       return ch ? `${base}: ${ch}` : base;
     }).join(" | ");
-    const rows = records.filter((r) => !r.archived).map((r) => {
+    const rows = records.filter((r) => !r.archived && (levelScope !== "core" || isCore(r))).map((r) => {
       const parent = r.parentId ? (records.find((p) => p.id === r.parentId)?.name || "") : "";
       const roleStr = rolesShown(r).map((x) => `${x.r}: ${x.t}`).join("; ");
       return [r.kind, parent, r.name, STATUS_META[r.status]?.label || r.status, r.submissionType, r.currentPhone, r.currentEmail, r.currentAddress, r.validatedPhone, r.validatedEmail, r.validatedAddress, roleStr, r.repName, r.repTitle, r.repEmail, r.submittedAt ? new Date(r.submittedAt).toLocaleString() : "", r.reviewedBy, r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : "", r.notes, auditStr(r.audit)].map(esc).join(",");
     });
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
-    const a = document.createElement("a"); a.href = url; a.download = "mda-validation-results.csv"; a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement("a"); a.href = url; a.download = `mda-validation-results${levelScope === "core" ? "-core" : ""}.csv`; a.click(); URL.revokeObjectURL(url);
   };
   const exportApprovedCsv = () => {
     const head = ["Ministry", "Organisation", "Submitted by", "Title or role", "Email", "Approved at", "Reviewed by"];
