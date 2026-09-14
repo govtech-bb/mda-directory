@@ -120,13 +120,14 @@ async function sbLoadActivity(sinceISO) {
 }
 // All submissions by contributor, for the Contributors leaderboard.
 async function sbLoadContributions() {
-  const url = `${SUPABASE_URL}/rest/v1/submissions?select=created_at,status,payload&order=created_at.asc`;
+  const url = `${SUPABASE_URL}/rest/v1/submissions?select=created_at,status,org_name,payload&order=created_at.asc`;
   const res = await sbAuthedFetch(url);
   if (!res.ok) throw new Error(`Supabase contributions ${res.status}`);
   const rows = await res.json();
   return rows.map((r) => {
     const p = r.payload || {};
-    return { email: (p.repEmail || "").trim().toLowerCase(), name: (p.repName || "").trim(), type: p.type === "new" ? "new" : "validation", at: r.created_at };
+    const isNew = p.type === "new";
+    return { email: (p.repEmail || "").trim().toLowerCase(), name: (p.repName || "").trim(), type: isNew ? "new" : "validation", org: (isNew ? (p.proposedName || r.org_name) : r.org_name) || "", status: r.status || "", at: r.created_at };
   }).filter((x) => x.email);
 }
 async function sbSetSubmissionStatus(id, status) {
@@ -551,6 +552,9 @@ export default function App() {
   const [chartMode, setChartMode] = useState("day"); // "day" (14 days) | "week" (8 weeks)
   const [levelScope, setLevelScope] = useState("all"); // "all" | "core" (levels 1 and 2)
   const [contribRows, setContribRows] = useState([]); // all submissions, for the contributors leaderboard
+  const [contribFrom, setContribFrom] = useState("");
+  const [contribTo, setContribTo] = useState("");
+  const [openContrib, setOpenContrib] = useState(null);
 
   useEffect(() => {
     setPendingSlug(getLinkSlug());
@@ -727,19 +731,24 @@ export default function App() {
   const archivedList = useMemo(() => records.filter((r) => r.archived), [records]);
   // Aggregate every submission by the contributor's email (validations and new-MDA requests).
   const contributors = useMemo(() => {
+    const fromT = contribFrom ? new Date(contribFrom + "T00:00:00").getTime() : -Infinity;
+    const toT = contribTo ? new Date(contribTo + "T23:59:59.999").getTime() : Infinity;
     const by = {};
     for (const r of contribRows) {
-      const c = by[r.email] || (by[r.email] = { email: r.email, name: "", valid: 0, neww: 0, last: null });
+      const t = r.at ? new Date(r.at).getTime() : 0;
+      if (t < fromT || t > toT) continue;
+      const c = by[r.email] || (by[r.email] = { email: r.email, name: "", valid: 0, neww: 0, last: null, items: [] });
       if (r.type === "new") c.neww++; else c.valid++;
       if (r.name) c.name = r.name;
       if (r.at && (!c.last || r.at > c.last)) c.last = r.at;
+      c.items.push({ type: r.type, org: r.org, status: r.status, at: r.at });
     }
-    const list = Object.values(by).map((c) => ({ ...c, total: c.valid + c.neww }));
+    const list = Object.values(by).map((c) => ({ ...c, total: c.valid + c.neww, items: c.items.slice().sort((a, b) => (b.at || "").localeCompare(a.at || "")) }));
     const nameCount = {};
     for (const c of list) { const k = c.name.toLowerCase(); if (k) nameCount[k] = (nameCount[k] || 0) + 1; }
     for (const c of list) c.dupName = !!(c.name && nameCount[c.name.toLowerCase()] > 1);
     return list.sort((a, b) => b.total - a.total || (b.last || "").localeCompare(a.last || ""));
-  }, [contribRows]);
+  }, [contribRows, contribFrom, contribTo]);
   // Name segments from the top-level ministry down to this record.
   const recParts = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts; };
   // Full "Ministry › body › facility" label for a record.
@@ -1960,6 +1969,13 @@ export default function App() {
                   </div>
                 )}
               </div>
+              <div className="contrib-filters">
+                <span className="cf-label">Between</span>
+                <input type="date" value={contribFrom} onChange={(e) => setContribFrom(e.target.value)} aria-label="From date" />
+                <span className="cf-label">and</span>
+                <input type="date" value={contribTo} onChange={(e) => setContribTo(e.target.value)} aria-label="To date" />
+                {(contribFrom || contribTo) && <button className="btn ghost sm" onClick={() => { setContribFrom(""); setContribTo(""); }}>Clear</button>}
+              </div>
               {contributors.length === 0 ? (
                 <div className="empty">No contributions yet. When representatives validate their details or propose a missing body, they will appear here.</div>
               ) : (<>
@@ -1977,16 +1993,41 @@ export default function App() {
                   <table className="contrib-table">
                     <thead><tr><th>#</th><th>Contributor</th><th className="num">Validations</th><th className="num">New MDAs</th><th className="num">Total</th><th className="num">Last active</th></tr></thead>
                     <tbody>
-                      {contributors.map((c, i) => (
-                        <tr key={c.email}>
-                          <td className="muted">{i + 1}</td>
-                          <td><div className="ct-name">{c.name || "Unknown"}{c.dupName && <span className="ct-dup" title="This name also appears under another email address">possible duplicate</span>}</div><a className="ct-email" href={`mailto:${c.email}`}>{c.email}</a></td>
-                          <td className="num">{c.valid || "\u2014"}</td>
-                          <td className="num">{c.neww || "\u2014"}</td>
-                          <td className="num strong">{c.total}</td>
-                          <td className="num nowrap">{c.last ? fmtDate(c.last) : "\u2014"}</td>
-                        </tr>
-                      ))}
+                      {contributors.map((c, i) => {
+                        const open = openContrib === c.email;
+                        return (
+                          <React.Fragment key={c.email}>
+                            <tr className={"contrib-row" + (open ? " open" : "")} onClick={() => setOpenContrib(open ? null : c.email)} tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenContrib(open ? null : c.email); } }} aria-expanded={open}>
+                              <td className="muted">{i + 1}</td>
+                              <td><div className="ct-name"><ChevronRight size={14} className={"chev" + (open ? " rot" : "")} />{c.name || "Unknown"}{c.dupName && <span className="ct-dup" title="This name also appears under another email address">possible duplicate</span>}</div><span className="ct-email">{c.email}</span></td>
+                              <td className="num">{c.valid || "\u2014"}</td>
+                              <td className="num">{c.neww || "\u2014"}</td>
+                              <td className="num strong">{c.total}</td>
+                              <td className="num nowrap">{c.last ? fmtDate(c.last) : "\u2014"}</td>
+                            </tr>
+                            {open && (
+                              <tr className="contrib-detail-row">
+                                <td></td>
+                                <td colSpan={5}>
+                                  <div className="contrib-detail">
+                                    <div className="cd-head"><span>{c.total} contribution{c.total === 1 ? "" : "s"}{(contribFrom || contribTo) ? " in this range" : ""}</span><a className="btn ghost sm" href={`mailto:${c.email}`}>Email {c.name || "contributor"}</a></div>
+                                    <ul className="cd-list">
+                                      {c.items.map((it, j) => (
+                                        <li key={j}>
+                                          <span className={"cd-kind " + it.type}>{it.type === "new" ? "Added" : "Validated"}</span>
+                                          <span className="cd-org">{it.org || "(unnamed)"}</span>
+                                          {it.status && it.status !== "pending" && <span className="cd-status">{it.status === "approved" ? "approved" : it.status === "returned" ? "sent back" : it.status}</span>}
+                                          <span className="cd-at">{fmtDate(it.at)}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -2418,6 +2459,25 @@ textarea { resize:vertical; }
 .contrib-table .ct-dup { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--pending); background:#fdf3e2; border-radius:999px; padding:1px 7px; }
 .contrib-table .ct-email { font-size:12.5px; color:var(--govbb-teal-00); word-break:break-all; }
 .contrib-table tbody tr:last-child td { border-bottom:0; }
+.contrib-filters { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; }
+.contrib-filters .cf-label { font-size:13px; color:var(--muted); }
+.contrib-filters input[type="date"] { font-family:inherit; font-size:13px; padding:6px 8px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); }
+.contrib-row { cursor:pointer; }
+.contrib-row:hover td { background:#f4f6fa; }
+.contrib-row.open td { background:#eef2fb; }
+.contrib-row .chev { color:var(--muted); margin-right:6px; transition:transform .12s; }
+.contrib-row .chev.rot { transform:rotate(90deg); }
+.contrib-detail-row > td { background:#f4f6fa; border-bottom:1px solid var(--line); padding:0 12px 12px; }
+.contrib-detail { padding:6px 0 2px; }
+.contrib-detail .cd-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0 10px; font-size:13px; color:var(--muted); }
+.cd-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
+.cd-list li { display:flex; align-items:center; gap:10px; font-size:13.5px; flex-wrap:wrap; }
+.cd-kind { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:999px; padding:1px 8px; }
+.cd-kind.validation { background:#e7f0ff; color:#1b4ea8; }
+.cd-kind.new { background:#fdeee2; color:#9a4a17; }
+.cd-org { font-weight:600; }
+.cd-status { font-size:11.5px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; }
+.cd-at { margin-left:auto; font-size:12.5px; color:var(--muted); white-space:nowrap; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
 .review-tools { display:flex; align-items:flex-end; gap:9px; }
