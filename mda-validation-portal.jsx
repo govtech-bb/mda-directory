@@ -118,6 +118,17 @@ async function sbLoadActivity(sinceISO) {
     return { created_at: r.created_at, type: isNew ? "new" : "validation", orgId: r.org_id || null, parentId: isNew ? (p.parentId || null) : null };
   });
 }
+// All submissions by contributor, for the Contributors leaderboard.
+async function sbLoadContributions() {
+  const url = `${SUPABASE_URL}/rest/v1/submissions?select=created_at,status,payload&order=created_at.asc`;
+  const res = await sbAuthedFetch(url);
+  if (!res.ok) throw new Error(`Supabase contributions ${res.status}`);
+  const rows = await res.json();
+  return rows.map((r) => {
+    const p = r.payload || {};
+    return { email: (p.repEmail || "").trim().toLowerCase(), name: (p.repName || "").trim(), type: p.type === "new" ? "new" : "validation", at: r.created_at };
+  }).filter((x) => x.email);
+}
 async function sbSetSubmissionStatus(id, status) {
   const res = await sbAuthedFetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -539,6 +550,7 @@ export default function App() {
   const [activity, setActivity] = useState([]);   // recent submissions for the chart
   const [chartMode, setChartMode] = useState("day"); // "day" (14 days) | "week" (8 weeks)
   const [levelScope, setLevelScope] = useState("all"); // "all" | "core" (levels 1 and 2)
+  const [contribRows, setContribRows] = useState([]); // all submissions, for the contributors leaderboard
 
   useEffect(() => {
     setPendingSlug(getLinkSlug());
@@ -561,12 +573,13 @@ export default function App() {
 
   // Load the pending review queue whenever a coordinator is signed in.
   useEffect(() => {
-    if (!authed || !supabaseReady()) { setPendingSubs([]); setActivity([]); return; }
+    if (!authed || !supabaseReady()) { setPendingSubs([]); setActivity([]); setContribRows([]); return; }
     (async () => { try { setPendingSubs(await sbLoadSubmissions()); } catch (e) { console.warn("Could not load review queue", e); } })();
     (async () => {
       try { const since = new Date(Date.now() - 100 * 864e5).toISOString(); setActivity(await sbLoadActivity(since)); }
       catch (e) { console.warn("Could not load activity", e); }
     })();
+    (async () => { try { setContribRows(await sbLoadContributions()); } catch (e) { console.warn("Could not load contributions", e); } })();
   }, [authed]);
 
   // Handle auth redirects: Google OAuth AND the email-confirmation link both
@@ -712,6 +725,21 @@ export default function App() {
   }, [pendingSubs, records]);
   const approvedList = useMemo(() => records.filter((r) => r.status === "approved" && !r.archived && (levelScope !== "core" || isCore(r))), [records, levelScope]);
   const archivedList = useMemo(() => records.filter((r) => r.archived), [records]);
+  // Aggregate every submission by the contributor's email (validations and new-MDA requests).
+  const contributors = useMemo(() => {
+    const by = {};
+    for (const r of contribRows) {
+      const c = by[r.email] || (by[r.email] = { email: r.email, name: "", valid: 0, neww: 0, last: null });
+      if (r.type === "new") c.neww++; else c.valid++;
+      if (r.name) c.name = r.name;
+      if (r.at && (!c.last || r.at > c.last)) c.last = r.at;
+    }
+    const list = Object.values(by).map((c) => ({ ...c, total: c.valid + c.neww }));
+    const nameCount = {};
+    for (const c of list) { const k = c.name.toLowerCase(); if (k) nameCount[k] = (nameCount[k] || 0) + 1; }
+    for (const c of list) c.dupName = !!(c.name && nameCount[c.name.toLowerCase()] > 1);
+    return list.sort((a, b) => b.total - a.total || (b.last || "").localeCompare(a.last || ""));
+  }, [contribRows]);
   // Name segments from the top-level ministry down to this record.
   const recParts = (r) => { const parts = [r.name]; let p = r.parentId, g = 0; while (p && recById[p] && g++ < 6) { parts.unshift(recById[p].name); p = recById[p].parentId; } return parts; };
   // Full "Ministry › body › facility" label for a record.
@@ -1108,6 +1136,13 @@ export default function App() {
     const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "mda-approved.csv"; a.click(); URL.revokeObjectURL(url);
   };
+  const exportContributorsCsv = () => {
+    const head = ["Name", "Email", "Validations", "New MDAs", "Total", "Last active"];
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = contributors.map((c) => [c.name, c.email, c.valid, c.neww, c.total, c.last ? new Date(c.last).toLocaleString() : ""].map(esc).join(","));
+    const url = URL.createObjectURL(new Blob([[head.map(esc).join(",")].concat(rows).join("\n")], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "mda-contributors.csv"; a.click(); URL.revokeObjectURL(url);
+  };
   const orderedRecords = useMemo(() => {
     const out = [];
     for (const m of ministries) { out.push(m); for (const d of deptsOf(m.id)) { out.push(d); for (const f of deptsOf(d.id)) out.push(f); } }
@@ -1475,6 +1510,7 @@ export default function App() {
               <button className={dashView === "overview" ? "subtab on" : "subtab"} onClick={() => setDashView("overview")}>Overview</button>
               <button className={dashView === "review" ? "subtab on" : "subtab"} onClick={() => setDashView("review")}>Pending review{pendingList.length ? <span className="pill">{pendingList.length}</span> : null}</button>
               <button className={dashView === "howto" ? "subtab on" : "subtab"} onClick={() => setDashView("howto")}>Guide</button>
+              <button className={dashView === "contributors" ? "subtab on" : "subtab"} onClick={() => setDashView("contributors")}>Contributors</button>
             </nav>
 
             {dashView === "overview" && <div className="dash-view fade">
@@ -1914,6 +1950,49 @@ export default function App() {
               </div>
             </div>}
 
+            {dashView === "contributors" && <div className="dash-view fade">
+              <div className="contrib-head">
+                <p>{contributors.length} contributor{contributors.length === 1 ? "" : "s"} so far. These are the people who have validated a record or added an MDA.</p>
+                {contributors.length > 0 && (
+                  <div className="contrib-tools">
+                    <button className="btn ghost sm" onClick={() => copyText(contributors.map((c) => c.email).join(", "), "contrib-emails")}>{copiedKey === "contrib-emails" ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy all emails</>}</button>
+                    <button className="btn ghost sm" onClick={exportContributorsCsv}><Download size={14} /> Download CSV</button>
+                  </div>
+                )}
+              </div>
+              {contributors.length === 0 ? (
+                <div className="empty">No contributions yet. When representatives validate their details or propose a missing body, they will appear here.</div>
+              ) : (<>
+                <div className="contrib-top">
+                  {contributors.slice(0, 3).map((c, i) => (
+                    <div key={c.email} className="contrib-card">
+                      <div className="cc-rank">Top contributor {i + 1}</div>
+                      <div className="cc-name">{c.name || "Unknown"}</div>
+                      <a className="cc-email" href={`mailto:${c.email}`}>{c.email}</a>
+                      <div className="cc-total">{c.total} <span>{c.valid ? `${c.valid} validation${c.valid === 1 ? "" : "s"}` : ""}{c.valid && c.neww ? ", " : ""}{c.neww ? `${c.neww} new` : ""}</span></div>
+                    </div>
+                  ))}
+                </div>
+                <div className="contrib-table-wrap">
+                  <table className="contrib-table">
+                    <thead><tr><th>#</th><th>Contributor</th><th className="num">Validations</th><th className="num">New MDAs</th><th className="num">Total</th><th className="num">Last active</th></tr></thead>
+                    <tbody>
+                      {contributors.map((c, i) => (
+                        <tr key={c.email}>
+                          <td className="muted">{i + 1}</td>
+                          <td><div className="ct-name">{c.name || "Unknown"}{c.dupName && <span className="ct-dup" title="This name also appears under another email address">possible duplicate</span>}</div><a className="ct-email" href={`mailto:${c.email}`}>{c.email}</a></td>
+                          <td className="num">{c.valid || "\u2014"}</td>
+                          <td className="num">{c.neww || "\u2014"}</td>
+                          <td className="num strong">{c.total}</td>
+                          <td className="num nowrap">{c.last ? fmtDate(c.last) : "\u2014"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>)}
+            </div>}
+
           </section>
         )}
       </main>
@@ -2317,6 +2396,28 @@ textarea { resize:vertical; }
 .level-toggle { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 14px; }
 .level-toggle .lt-label { font-size:13px; color:var(--muted); }
 .level-toggle .lt-note { font-size:12px; color:var(--muted); }
+.contrib-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:16px; }
+.contrib-head p { margin:0; font-size:15px; color:var(--ink); max-width:64ch; }
+.contrib-tools { display:flex; gap:8px; flex-wrap:wrap; }
+.contrib-top { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:18px; }
+.contrib-card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); padding:14px 16px; }
+.contrib-card .cc-rank { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:600; }
+.contrib-card .cc-name { font-size:16px; font-weight:700; margin-top:6px; }
+.contrib-card .cc-email { display:block; font-size:12.5px; color:var(--govbb-teal-00); word-break:break-all; }
+.contrib-card .cc-total { font-family:'Figtree',system-ui,sans-serif; font-size:24px; font-weight:700; color:var(--navy); margin-top:8px; }
+.contrib-card .cc-total span { font-size:12px; font-weight:400; color:var(--muted); }
+.contrib-table-wrap { overflow-x:auto; }
+.contrib-table { width:100%; border-collapse:collapse; font-size:14px; }
+.contrib-table th, .contrib-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+.contrib-table th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
+.contrib-table th.num, .contrib-table td.num { text-align:right; }
+.contrib-table td.strong { font-weight:700; }
+.contrib-table td.muted { color:var(--muted); }
+.contrib-table td.nowrap { white-space:nowrap; }
+.contrib-table .ct-name { font-weight:600; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.contrib-table .ct-dup { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--pending); background:#fdf3e2; border-radius:999px; padding:1px 7px; }
+.contrib-table .ct-email { font-size:12.5px; color:var(--govbb-teal-00); word-break:break-all; }
+.contrib-table tbody tr:last-child td { border-bottom:0; }
 .review-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
 .review-head p { color:var(--muted); font-size:16px; margin:0; max-width:560px; }
 .review-tools { display:flex; align-items:flex-end; gap:9px; }
