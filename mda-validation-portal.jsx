@@ -1971,12 +1971,14 @@ export default function App() {
               </div>
               <div className="contrib-filters">
                 <span className="cf-label">Between</span>
-                <input type="date" value={contribFrom} onChange={(e) => setContribFrom(e.target.value)} aria-label="From date" />
+                <input type="date" value={contribFrom} max={contribTo || undefined} onChange={(e) => setContribFrom(e.target.value)} aria-label="From date" />
                 <span className="cf-label">and</span>
-                <input type="date" value={contribTo} onChange={(e) => setContribTo(e.target.value)} aria-label="To date" />
+                <input type="date" value={contribTo} min={contribFrom || undefined} onChange={(e) => setContribTo(e.target.value)} aria-label="To date" />
                 {(contribFrom || contribTo) && <button className="btn ghost sm" onClick={() => { setContribFrom(""); setContribTo(""); }}>Clear</button>}
               </div>
-              {contributors.length === 0 ? (
+              {contribFrom && contribTo && contribFrom > contribTo ? (
+                <p className="field-err">The end date is before the start date. Change the dates to see contributors.</p>
+              ) : contributors.length === 0 ? (
                 <div className="empty">No contributions yet. When representatives validate their details or propose a missing body, they will appear here.</div>
               ) : (<>
                 <div className="contrib-top">
