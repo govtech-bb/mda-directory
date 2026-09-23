@@ -1781,15 +1781,8 @@ export default function App() {
                                   const exclude = new Set([r.id, ...allDescendantIds(r.id)]);
                                   return (
                                   <div className="move-box">
-                                    <label className="lbl wide"><span>Move “{r.name}” under</span>
-                                      <select value={moveParent} onChange={(e) => setMoveParent(e.target.value)}>
-                                        <option value="">Choose a ministry or body…</option>
-                                        {ministries.filter((m) => !exclude.has(m.id)).flatMap((m) => [
-                                          <option key={m.id} value={m.id}>Under: {m.name}</option>,
-                                          ...deptsOf(m.id).filter((d) => !exclude.has(d.id)).map((d) => <option key={d.id} value={d.id}>· under {m.name} › {d.name}</option>),
-                                        ])}
-                                      </select>
-                                    </label>
+                                    <div className="lbl wide"><span>Move “{r.name}” under</span></div>
+                                    {(() => { const moveOptions = ministries.filter((m) => !exclude.has(m.id)).flatMap((m) => [{ id: m.id, label: `Under: ${m.name}` }, ...deptsOf(m.id).filter((d) => !exclude.has(d.id)).map((d) => ({ id: d.id, label: `${m.name} › ${d.name}` }))]); return <MovePicker key={r.id} options={moveOptions} onChange={setMoveParent} />; })()}
                                     <p className="move-hint">It keeps everything under it. Its validation link stays the same.</p>
                                     <div className="edit-actions"><button className="btn ghost sm" onClick={() => { setMoveId(null); setMoveParent(""); }}>Cancel</button><button className="btn primary sm" onClick={moveRecord}>Move</button></div>
                                   </div>
@@ -2144,6 +2137,36 @@ function RequestsChart({ data }) {
     </svg>
   );
 }
+function MovePicker({ options, onChange }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [chosen, setChosen] = useState(false);
+  const ql = q.trim().toLowerCase();
+  const matches = (ql ? options.filter((o) => o.label.toLowerCase().includes(ql)) : options).slice(0, 60);
+  const pick = (o) => { setChosen(true); setQ(o.label); setOpen(false); onChange(o.id); };
+  const onKey = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, matches.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (e.key === "Enter") { if (open && matches[active]) { e.preventDefault(); pick(matches[active]); } }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+  return (
+    <div className="mp">
+      <input className="mp-input" type="text" role="combobox" aria-expanded={open} aria-autocomplete="list" placeholder="Search for a ministry or body" value={q}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(0); if (chosen) { setChosen(false); onChange(""); } }}
+        onFocus={() => setOpen(true)} onKeyDown={onKey} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      {open && (
+        <ul className="mp-list" role="listbox">
+          {matches.length === 0 ? <li className="mp-empty">No matches</li> : matches.map((o, i) => (
+            <li key={o.id} role="option" aria-selected={i === active} className={"mp-opt" + (i === active ? " on" : "")}
+              onMouseEnter={() => setActive(i)} onMouseDown={(e) => { e.preventDefault(); pick(o); }}>{o.label}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 function Stat({ n, label, cls, onClick, active }) {
   const inner = <><div className="stat-n">{n}</div><div className="stat-l">{label}</div></>;
   if (onClick) return <button type="button" className={`stat stat-${cls} stat-btn${active ? " stat-active" : ""}`} onClick={onClick} aria-pressed={active}>{inner}<span className="stat-caret">{active ? "Hide" : "View"}</span></button>;
@@ -2448,7 +2471,14 @@ textarea { resize:vertical; }
 .edit-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; } .edit-actions { grid-column:1 / -1; justify-content:flex-end; }
 .edit-sep { grid-column:1 / -1; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border-top:1px solid var(--line); padding-top:12px; margin-top:2px; }
 .move-box { margin-top:12px; }
-.move-box .lbl { display:block; } .move-box select { width:100%; max-width:520px; }
+.move-box .lbl { display:block; margin-bottom:8px; }
+.mp { position:relative; max-width:520px; }
+.mp-input { width:100%; font-family:inherit; font-size:14px; padding:9px 11px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--surface); color:var(--ink); }
+.mp-input:focus { outline:2px solid var(--govbb-teal-00); outline-offset:1px; }
+.mp-list { position:absolute; top:calc(100% + 3px); left:0; right:0; z-index:30; margin:0; padding:4px; list-style:none; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); box-shadow:0 14px 34px -14px rgba(11,16,32,.30); max-height:260px; overflow:auto; }
+.mp-opt { padding:8px 10px; border-radius:6px; font-size:14px; cursor:pointer; }
+.mp-opt.on { background:var(--govbb-blue-05,#eef2fb); }
+.mp-empty { padding:8px 10px; color:var(--muted); font-size:13.5px; }
 .move-hint { font-size:12.5px; color:var(--muted); margin:8px 0 0; }
 .subtabs { display:flex; gap:4px; margin:18px 0 4px; border-bottom:1px solid var(--line); }
 .subtab { background:transparent; border:0; border-bottom:2.5px solid transparent; font-family:inherit; font-size:13.5px; font-weight:600; color:var(--muted); padding:9px 14px; cursor:pointer; display:flex; align-items:center; gap:7px; }
