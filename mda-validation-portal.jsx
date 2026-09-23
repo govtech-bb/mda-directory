@@ -523,6 +523,8 @@ export default function App() {
   const [rowOpen, setRowOpen] = useState(null);
   const [editId, setEditId] = useState(null);
   const [editFields, setEditFields] = useState(null);
+  const [moveId, setMoveId] = useState(null);
+  const [moveParent, setMoveParent] = useState("");
   const [newName, setNewName] = useState("");
   const [newParent, setNewParent] = useState("");
   const [linkMode, setLinkMode] = useState(false);
@@ -1108,6 +1110,16 @@ export default function App() {
     await persist(records.map((r) => r.id === editId ? { ...r, ...editFields, audit: ch.length ? [...(r.audit || []), auditEntry("edited", reviewer, ch)] : (r.audit || []) } : r));
     setEditId(null); setEditFields(null);
   };
+  const allDescendantIds = (id) => { const out = []; const walk = (pid) => { for (const c of records) if (c.parentId === pid) { out.push(c.id); walk(c.id); } }; walk(id); return out; };
+  const startMove = (rec) => { setEditId(null); setEditFields(null); setMoveId(rec.id); setMoveParent(""); };
+  const moveRecord = async () => {
+    const rec = records.find((x) => x.id === moveId); if (!rec) return;
+    if (!moveParent) { setDashError("Choose a ministry or body to move it under."); return; }
+    const newParent = records.find((x) => x.id === moveParent);
+    const oldParent = records.find((x) => x.id === rec.parentId);
+    const ok = await persist(records.map((x) => x.id === rec.id ? { ...x, parentId: moveParent, audit: [...(x.audit || []), auditEntry("moved", reviewer, [{ field: "Moved", action: "corrected", from: oldParent ? oldParent.name : "(top level)", to: newParent ? newParent.name : "" }])] } : x));
+    if (ok) { setMoveId(null); setMoveParent(""); setDashNotice(`Moved “${rec.name}” under ${newParent ? newParent.name : ""}.`); }
+  };
   const resetAll = async () => {
     if (!window.confirm(
       "Reset the WHOLE directory back to the built-in starter list?\n\n" +
@@ -1125,7 +1137,7 @@ export default function App() {
     const head = ["Type", "Parent Ministry", "Organisation", "Status", "Submission", "Official Phone", "Official Email", "Official Address", "Submitted Phone", "Submitted Email", "Submitted Address", "Roles", "Validated By", "Title", "Contact Email", "Submitted At", "Reviewed By", "Reviewed At", "Notes", "Audit Trail"];
     const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const auditStr = (a) => (a || []).map((e) => {
-      const k = { submitted: "submitted", approved: "approved", returned: "sent back", edited: "on-file edited", archived: "archived", restored: "restored" }[e.kind] || e.kind;
+      const k = { submitted: "submitted", approved: "approved", returned: "sent back", edited: "on-file edited", archived: "archived", restored: "restored", moved: "moved" }[e.kind] || e.kind;
       const base = `${new Date(e.t).toLocaleString()} ${k}${e.actor ? ` by ${e.actor}` : ""}`;
       const ch = (e.changes || []).map((c) => c.action === "corrected" ? `${c.field} corrected (${c.from || "—"} → ${c.to || "—"})` : `${c.field} ${c.action}`).join("; ");
       return ch ? `${base}: ${ch}` : base;
@@ -1765,7 +1777,24 @@ export default function App() {
                             </div>
                             {rowOpen === r.id && (
                               <div className="drow-detail">
-                                {editId === r.id ? (
+                                {moveId === r.id ? (() => {
+                                  const exclude = new Set([r.id, ...allDescendantIds(r.id)]);
+                                  return (
+                                  <div className="move-box">
+                                    <label className="lbl wide"><span>Move “{r.name}” under</span>
+                                      <select value={moveParent} onChange={(e) => setMoveParent(e.target.value)}>
+                                        <option value="">Choose a ministry or body…</option>
+                                        {ministries.filter((m) => !exclude.has(m.id)).flatMap((m) => [
+                                          <option key={m.id} value={m.id}>Under: {m.name}</option>,
+                                          ...deptsOf(m.id).filter((d) => !exclude.has(d.id)).map((d) => <option key={d.id} value={d.id}>· under {m.name} › {d.name}</option>),
+                                        ])}
+                                      </select>
+                                    </label>
+                                    <p className="move-hint">It keeps everything under it. Its validation link stays the same.</p>
+                                    <div className="edit-actions"><button className="btn ghost sm" onClick={() => { setMoveId(null); setMoveParent(""); }}>Cancel</button><button className="btn primary sm" onClick={moveRecord}>Move</button></div>
+                                  </div>
+                                  );
+                                })() : editId === r.id ? (
                                   <div className="edit-grid">
                                     <label className="lbl wide"><span>Name</span><input value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} /></label>
                                     <label className="lbl"><span>On-file phone</span><input value={editFields.currentPhone} onChange={(e) => setEditFields({ ...editFields, currentPhone: e.target.value })} /></label>
@@ -1792,7 +1821,7 @@ export default function App() {
                                     <div className="meta"><span>{r.repName ? `Submitted by ${r.repName}${r.repTitle ? `, ${r.repTitle}` : ""}` : "No submission yet"}{r.reviewedBy ? ` · reviewed by ${r.reviewedBy}` : ""}</span><span>{r.submittedAt ? fmtDate(r.submittedAt) : ""}</span></div>
                                     {r.notes && <div className="meta-notes">“{r.notes}”</div>}
                                     <AuditTrail entries={r.audit} />
-                                    <div className="drow-tools"><button className="btn ghost sm" onClick={() => copyText(linkFor(r), "row-" + r.id)}>{copiedKey === "row-" + r.id ? <><Check size={14} /> Link copied</> : <><Link2 size={14} /> Copy link</>}</button><button className="btn ghost sm" onClick={() => startEdit(r)}><PencilLine size={14} /> Edit on-file details</button><button className="btn ghost sm" onClick={() => archiveRecord(r)}>Archive</button><button className="btn ghost sm danger" onClick={() => removeRecord(r.id)}><Trash2 size={14} /> Remove</button></div>
+                                    <div className="drow-tools"><button className="btn ghost sm" onClick={() => copyText(linkFor(r), "row-" + r.id)}>{copiedKey === "row-" + r.id ? <><Check size={14} /> Link copied</> : <><Link2 size={14} /> Copy link</>}</button><button className="btn ghost sm" onClick={() => startEdit(r)}><PencilLine size={14} /> Edit on-file details</button>{r.kind !== "ministry" && <button className="btn ghost sm" onClick={() => startMove(r)}>Move</button>}<button className="btn ghost sm" onClick={() => archiveRecord(r)}>Archive</button><button className="btn ghost sm danger" onClick={() => removeRecord(r.id)}><Trash2 size={14} /> Remove</button></div>
                                   </>
                                 )}
                               </div>
@@ -2122,7 +2151,7 @@ function Stat({ n, label, cls, onClick, active }) {
 }
 function AuditTrail({ entries }) {
   if (!entries || !entries.length) return null;
-  const KIND = { submitted: "Submitted for review", approved: "Approved", returned: "Sent back for changes", edited: "On-file details edited", archived: "Archived", restored: "Restored" };
+  const KIND = { submitted: "Submitted for review", approved: "Approved", returned: "Sent back for changes", edited: "On-file details edited", archived: "Archived", restored: "Restored", moved: "Moved" };
   const fmt = (iso) => { try { return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return ""; } };
   const list = [...entries].reverse();
   return (
@@ -2418,6 +2447,9 @@ textarea { resize:vertical; }
 .link-copy { white-space:nowrap; }
 .edit-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; } .edit-actions { grid-column:1 / -1; justify-content:flex-end; }
 .edit-sep { grid-column:1 / -1; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border-top:1px solid var(--line); padding-top:12px; margin-top:2px; }
+.move-box { margin-top:12px; }
+.move-box .lbl { display:block; } .move-box select { width:100%; max-width:520px; }
+.move-hint { font-size:12.5px; color:var(--muted); margin:8px 0 0; }
 .subtabs { display:flex; gap:4px; margin:18px 0 4px; border-bottom:1px solid var(--line); }
 .subtab { background:transparent; border:0; border-bottom:2.5px solid transparent; font-family:inherit; font-size:13.5px; font-weight:600; color:var(--muted); padding:9px 14px; cursor:pointer; display:flex; align-items:center; gap:7px; }
 .subtab:hover { color:var(--ink); } .subtab.on { color:var(--ink); border-bottom-color:var(--govbb-teal-00); }
