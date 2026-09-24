@@ -4,6 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MDA Contact Information Validation Portal</title>
+
+    <!-- Privacy-friendly usage analytics (GoatCounter): cookieless, sets no
+         cookies, stores no personal data, needs no consent banner.
+         Setup: register the code below as a site at https://www.goatcounter.com/
+         (the subdomain must match the code). Until it is registered the beacon
+         simply 404s and the page is unaffected. To use a different code, change
+         it in both the settings script and the count.js data attribute. -->
+    <script>
+      // Record only a clean path: the page path plus the public ?mda= org slug
+      // when present. The URL hash (where auth tokens live) is never recorded,
+      // and every other query parameter is dropped, so no token, email or error
+      // text can ever reach the analytics endpoint.
+      window.goatcounter = {
+        path: function () {
+          try {
+            var p = location.pathname;
+            var mda = new URLSearchParams(location.search).get("mda");
+            if (!mda) return p;
+            return p + "?mda=" + mda.slice(0, 60).replace(/[^a-z0-9-]/gi, "");
+          } catch (e) { return location.pathname; }
+        }
+      };
+    </script>
+    <script data-goatcounter="https://mda-directory.goatcounter.com/count"
+            async src="//gc.zgo.at/count.js"></script>
   </head>
   <body>
     <div id="root"></div>
